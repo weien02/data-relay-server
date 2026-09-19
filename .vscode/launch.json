@@ -1,0 +1,27 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Dedicated server (Debug, port 5000)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-server-debug",
+      "program": "${workspaceFolder}/DedicatedServer/DedicatedServer/bin/Debug/net8.0/DedicatedServer.dll",
+      "args": ["5000"],
+      "cwd": "${workspaceFolder}/DedicatedServer/DedicatedServer",
+      "console": "integratedTerminal",
+      "stopAtEntry": false
+    },
+    {
+      "name": "Dedicated server (Release, port 5000)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-server-release",
+      "program": "${workspaceFolder}/DedicatedServer/DedicatedServer/bin/Release/net8.0/DedicatedServer.dll",
+      "args": ["5000"],
+      "cwd": "${workspaceFolder}/DedicatedServer/DedicatedServer",
+      "console": "integratedTerminal",
+      "stopAtEntry": false
+    }
+  ]
+}

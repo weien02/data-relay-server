@@ -1,0 +1,172 @@
+# Dedicated Server
+
+Authoritative dedicated server for the frame-synchronisation networking
+framework. It is a headless .NET 8 console application that listens on a UDP
+port, accepts client logins, and drives the server-side simulation tick.
+
+The Unity client lives in `Unity3D Assets/` and is documented separately.
+
+## Prerequisites
+
+The **.NET 8 SDK (x64)** is the only requirement. Confirm it is present:
+
+```powershell
+dotnet --list-sdks
+```
+
+You should see an `8.0.x` entry, for example:
+
+```
+8.0.425 [C:\Program Files\dotnet\sdk]
+```
+
+If .NET 8 is missing, install it from
+<https://dotnet.microsoft.com/download/dotnet/8.0>. Choose the **SDK**, not the
+runtime alone — the SDK is needed to compile, and it includes the runtime.
+
+Newer SDKs may also be installed alongside; `global.json` pins the build to the
+8.0.x line regardless. See [Why .NET 8](#why-net-8).
+
+## Run the server
+
+From the repository root:
+
+```powershell
+dotnet run --project "DedicatedServer\DedicatedServer" -c Release -- 5000
+```
+
+This compiles and launches in one step. `5000` is the UDP port to listen on and
+may be omitted, in which case the server defaults to port 5000.
+
+On first launch Windows Firewall may ask whether to allow the application
+through. Accept it, or clients will not be able to reach the server.
+
+### Expected output
+
+```
+process id 7456
+[Information][DedicatedServer.Demo.JumpingGame.JumpingGame] begin StartServer
+[Information][DedicatedServer.Demo.JumpingGame.JumpingGame] server running on port 5000
+[Information][DedicatedServer.Demo.JumpingGame.JumpingGame] end StartServer
+```
+
+The process then stays in its tick loop, printing further log lines as clients
+connect. The process id is printed on the first line so a profiler can attach
+without looking it up, for example `dotnet-counters monitor -p 7456`.
+
+### Stop the server
+
+Press **Ctrl+C** in the console. This triggers a graceful shutdown that
+releases the listening socket rather than killing the process outright.
+
+## Build and run as separate steps
+
+Useful when taking measurements, so that compilation is not part of the timed
+run.
+
+```powershell
+# Build once
+dotnet build "DedicatedServer\DedicatedServer.sln" -c Release
+
+# Run the produced executable as many times as needed
+.\DedicatedServer\DedicatedServer\bin\Release\net8.0\DedicatedServer.exe 5000
+```
+
+Use `-c Debug` in place of `-c Release` for a debug build; the output path
+changes to `bin\Debug\net8.0\` to match.
+
+Always measure against a **Release** build. Debug builds disable optimisations
+and produce misleading performance figures.
+
+## Run from Visual Studio Code
+
+Visual Studio is not required. VS Code needs the
+[C# Dev Kit](https://marketplace.visualstudio.com/items?itemName=ms-dotnettools.csdevkit)
+extension, which pulls in the C# extension as a dependency.
+
+1. Open the repository root folder in VS Code.
+2. Press **F5**.
+3. Choose **Dedicated server (Debug, port 5000)**.
+
+The project builds first, then launches in the integrated terminal so that
+Ctrl+C reaches the shutdown handler. Breakpoints in the tick loop and packet
+handlers behave normally.
+
+A **Dedicated server (Release, port 5000)** configuration is also provided.
+**Ctrl+Shift+B** runs a debug build without launching.
+
+To change the port, edit the `"args": ["5000"]` line in
+[.vscode/launch.json](.vscode/launch.json).
+
+## Configuration
+
+Runtime behaviour is set in
+[Framework/Configurations.cs](DedicatedServer/DedicatedServer/Framework/Configurations.cs):
+
+| Setting | Default | Purpose |
+| --- | --- | --- |
+| `SyncRatePerSecond` | 30 | State synchronisation frames sent per second |
+| `DisconnectThersholdFrameCount` | 1000 | Silent frames before a client is dropped |
+| `EnableAutomaticAuthorityTransfer` | true | Whether entity authority migrates automatically |
+| `EnableDirtyOnlySync` | true | Send only changed fields rather than full state |
+| `EnableParallelWriteTickLogging` | false | Verbose logging for the parallel write tick |
+| `ParallelWriteTickWorkerThreadLimit` | -1 | Worker thread cap; -1 means unbounded |
+
+These values must match on the server and the client. They are intended to be
+fixed at startup and left alone while the process runs.
+
+Garbage collection and JIT tiering are pinned explicitly in
+[DedicatedServer.csproj](DedicatedServer/DedicatedServer/DedicatedServer.csproj)
+so that resource-usage measurements stay reproducible across machines and runs.
+Changing them invalidates any previously recorded baseline.
+
+## Why .NET 8
+
+`global.json` pins the build to the 8.0.x SDK. This is deliberate:
+
+- The project targets `net8.0`, so the toolchain and the target agree.
+- Performance figures depend on the runtime's garbage collector and JIT.
+  Building against a different major version shifts those numbers and breaks
+  comparability with previously recorded results.
+
+Without the pin, the .NET CLI selects the highest installed SDK, which may be a
+newer major version.
+
+## Project layout
+
+```
+DedicatedServer/DedicatedServer/
+├── Program.cs              Entry point, argument parsing, tick loop
+├── Framework/
+│   ├── Configurations.cs   Shared server/client settings
+│   ├── ECS/                Entity registry, data stores, networked values
+│   ├── Networking/         Packet format, packet types, UDP transport
+│   └── Server/             Game server, rooms, sessions, frame sync
+├── GameDemo/               Jumping Game demo simulation
+└── Unity/ECS/Data/         Data types shared with the Unity client
+```
+
+## Troubleshooting
+
+**`error MSB4242: SDK Resolver Failure` mentioning `'0x00' is an invalid start of a value`**
+
+An installed SDK has corrupted workload manifest files. Confirm `global.json`
+is present at the repository root and that `dotnet --version` reports an
+`8.0.x` version. If a broken SDK is still being selected, repair it through
+Settings → Apps → the relevant .NET SDK entry → Modify → Repair.
+
+**`You must install or update .NET to run this application`**
+
+The .NET 8 runtime is missing. Installing the .NET 8 SDK as described under
+[Prerequisites](#prerequisites) resolves this.
+
+**`SocketException (10048): Only one usage of each socket address (protocol/network address/port) is normally permitted`**
+
+Another process already holds the port. Either stop the earlier server
+instance, or start this one on a different port by passing a different number.
+
+**Clients cannot connect across a network**
+
+Confirm the server host allows inbound **UDP** on the chosen port, and that
+clients are pointing at the server machine's IP address rather than
+`127.0.0.1`.
