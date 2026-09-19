@@ -18,6 +18,14 @@ namespace DedicatedServer.Framework.Server
         // tick. Without it, a long stall (breakpoint, GC pause, machine sleeping)
         // leaves enough banked time to fire many sync frames back to back.
         private const float MaximumCatchUpSeconds = 0.25f;
+
+        // Ticks slower than the sync interval are summarised on this period rather
+        // than logged individually. A loop that cannot keep up reports on nearly
+        // every tick, which would otherwise bury everything else in the log.
+        private const float SlowTickReportIntervalSeconds = 5.0f;
+        private float _slowTickReportTimer;
+        private int _slowTickCount;
+        private int _tickCount;
         private uint _syncFrameNumber;
         public uint SyncFrameNumber => this._syncFrameNumber;
         private GameServer _gameServer;
@@ -34,6 +42,9 @@ namespace DedicatedServer.Framework.Server
             this._syncInterval = 1.0f / this._syncRatePerSecond;
             this._syncTimer = 0;
             this._syncFrameNumber = 0;
+            this._slowTickReportTimer = 0;
+            this._slowTickCount = 0;
+            this._tickCount = 0;
             this._sync = true;
         }
 
@@ -43,9 +54,23 @@ namespace DedicatedServer.Framework.Server
             {
                 return;
             }
+            this._tickCount++;
+            this._slowTickReportTimer += deltaTime;
             if(deltaTime > this._syncInterval)
             {
-                _logger.LogWarning("The delta time is larger than the sync interval. This may cause the server to sync multiple frames in the current tick. delta time = " + deltaTime + ", sync interval = " + this._syncInterval);
+                this._slowTickCount++;
+            }
+            if(this._slowTickReportTimer >= SlowTickReportIntervalSeconds)
+            {
+                if(this._slowTickCount > 0)
+                {
+                    _logger.LogWarning("Tick took longer than the sync interval on " + this._slowTickCount + " of the last "
+                        + this._tickCount + " ticks, so those ticks sync more than one frame. The loop is not running fast"
+                        + " enough for SyncRatePerSecond = " + this._syncRatePerSecond + " (sync interval = " + this._syncInterval + "s).");
+                }
+                this._slowTickReportTimer = 0;
+                this._slowTickCount = 0;
+                this._tickCount = 0;
             }
             this._syncTimer += deltaTime;
             if(this._syncTimer > MaximumCatchUpSeconds)

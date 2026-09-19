@@ -46,6 +46,7 @@ through. Accept it, or clients will not be able to reach the server.
 
 ```
 process id 7456
+sync rate 30 frames/second
 [Information][DedicatedServer.Demo.JumpingGame.JumpingGame] begin StartServer
 [Information][DedicatedServer.Demo.JumpingGame.JumpingGame] server running on port 5000
 [Information][DedicatedServer.Demo.JumpingGame.JumpingGame] end StartServer
@@ -54,6 +55,22 @@ process id 7456
 The process then stays in its tick loop, printing further log lines as clients
 connect. The process id is printed on the first line so a profiler can attach
 without looking it up, for example `dotnet-counters monitor -p 7456`.
+
+### Overriding the sync rate
+
+The second line of that output reports the rate the run is using, which is 30
+above because nothing overrode it. An optional `--sync-rate` changes it for a
+single run, which saves editing and rebuilding when sweeping rates during
+measurement:
+
+```powershell
+dotnet run --project "DedicatedServer\DedicatedServer" -c Release -- 5000 --sync-rate 60
+```
+
+That run reports `sync rate 60 frames/second` instead. The port and
+`--sync-rate` may appear in either order, and either may be omitted. See
+[Sync rate accuracy](#sync-rate-accuracy) for the rates the tick loop can
+actually deliver.
 
 ### Stop the server
 
@@ -103,17 +120,29 @@ To change the port, edit the `"args": ["5000"]` line in
 Runtime behaviour is set in
 [Framework/Configurations.cs](DedicatedServer/DedicatedServer/Framework/Configurations.cs):
 
-| Setting | Default | Purpose |
-| --- | --- | --- |
-| `SyncRatePerSecond` | 30 | State synchronisation frames sent per second |
-| `DisconnectThersholdFrameCount` | 1000 | Silent frames before a client is dropped |
-| `EnableAutomaticAuthorityTransfer` | true | Whether entity authority migrates automatically |
-| `EnableDirtyOnlySync` | true | Send only changed fields rather than full state |
-| `EnableParallelWriteTickLogging` | false | Verbose logging for the parallel write tick |
-| `ParallelWriteTickWorkerThreadLimit` | -1 | Worker thread cap; -1 means unbounded |
+| Setting | Class default | Jumping Game demo | Purpose |
+| --- | --- | --- | --- |
+| `SyncRatePerSecond` | 30 | 30 | State synchronisation frames sent per second |
+| `DisconnectThersholdFrameCount` | 1000 | **100** | Silent frames before a client is dropped |
+| `EnableAutomaticAuthorityTransfer` | true | not set | Whether entity authority migrates automatically |
+| `EnableDirtyOnlySync` | true | true | Send only changed fields rather than full state |
+| `EnableParallelWriteTickLogging` | false | false on the server, **true** in the Unity client | Verbose logging for the parallel write tick |
+| `ParallelWriteTickWorkerThreadLimit` | -1 | not set | Worker thread cap; -1 means unbounded |
+
+The **Class default** column is what `Configurations` itself constructs. The
+**Jumping Game demo** column is what `JumpingGame.ConfigureFramework` then
+overrides, and is therefore what actually runs. The two differ, so read the
+demo column when interpreting results.
+
+Two consequences worth noting. The disconnect threshold counts sync frames, not
+seconds, so the demo's 100 frames is about 3.3 seconds at 30 frames per second
+rather than the 33 seconds the class default would give. And
+`EnableParallelWriteTickLogging` is deliberately on in the Unity client, since
+the parallelisation measurements read that log from the Unity console.
 
 These values must match on the server and the client. They are intended to be
-fixed at startup and left alone while the process runs.
+fixed at startup and left alone while the process runs; `StartFrameSync` reads
+`SyncRatePerSecond` once, so changing it after the server starts has no effect.
 
 Garbage collection and JIT tiering are pinned explicitly in
 [DedicatedServer.csproj](DedicatedServer/DedicatedServer/DedicatedServer.csproj)
@@ -128,16 +157,36 @@ loop itself runs. Measured over 10 seconds with no clients connected, a
 configured 30 frames per second produced **29.90**.
 
 That shortfall is expected, and it is not drift. `Thread.Sleep` wakes on the
-operating system's timer granularity, about 15.6 ms on Windows by default, so
-the loop iterates roughly 65-75 times per second and a frame can only be sent
-on a whole iteration. Individual gaps therefore land on two or three
-iterations, roughly 27-46 ms, either side of the nominal 33.3 ms. The
-accumulator carries the remainder forward, so the long-run average stays
-correct even though no single gap is exactly 33.3 ms.
+operating system's timer granularity, about 15.6 ms on Windows by default, so a
+frame can only be sent on a whole loop iteration and individual gaps cluster
+around whole multiples of the iteration time rather than landing on 33.3 ms
+exactly. The accumulator carries the remainder forward, so the long-run average
+stays correct even though no single gap is.
 
-This matters when measuring latency: the jitter shows up in the results and is
-a property of the measurement setup, not of the framework. Removing it would
-mean either raising the timer resolution, which is a Windows-only call, or
+The loop rate itself is not stable. Iteration counts between roughly 65 and 105
+per second were observed on one machine across runs, because other processes can
+raise or lower the system timer granularity. This no longer changes the send
+rate, which is the point of the accumulator, but it does change the jitter, and
+it caps how high a rate the loop can actually deliver.
+
+If the loop cannot keep up with the configured rate, ticks start covering more
+than one sync interval and several frames are sent in a single tick. This is
+reported once every five seconds rather than per tick:
+
+```
+[Warning][...ServerSideFrameSynchronizationController] Tick took longer than the
+sync interval on 12 of the last 489 ticks, so those ticks sync more than one
+frame. The loop is not running fast enough for SyncRatePerSecond = 60
+(sync interval = 0.016666668s).
+```
+
+Seeing this means the requested rate is near or past what the loop can deliver
+on that machine, and the resulting frame timing will be uneven. At 30 frames per
+second it stays silent.
+
+The jitter matters when measuring latency: it shows up in the results and is a
+property of the measurement setup, not of the framework. Removing it would mean
+either raising the timer resolution, which is a Windows-only call, or
 spin-waiting, which burns CPU and would distort the resource-usage figures.
 Neither is done here, deliberately.
 
