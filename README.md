@@ -1,10 +1,9 @@
-# Dedicated Server
+# DedicatedServer
 
 Authoritative dedicated server for the frame-synchronisation networking
 framework. It is a headless .NET 8 console application that listens on a UDP
 port, accepts client logins, and drives the server-side simulation tick.
 
-The Unity client lives in `Unity3D Assets/` and is documented separately.
 
 ## Prerequisites
 
@@ -80,8 +79,7 @@ and produce misleading performance figures.
 
 ## Run from Visual Studio Code
 
-Visual Studio is not required. VS Code needs the
-[C# Dev Kit](https://marketplace.visualstudio.com/items?itemName=ms-dotnettools.csdevkit)
+VS Code needs the [C# Dev Kit](https://marketplace.visualstudio.com/items?itemName=ms-dotnettools.csdevkit)
 extension, which pulls in the C# extension as a dependency.
 
 1. Open the repository root folder in VS Code.
