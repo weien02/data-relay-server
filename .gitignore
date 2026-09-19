@@ -1,0 +1,15 @@
+# --- .NET server ---
+bin/
+obj/
+.vs/
+*.user
+
+# --- Unity ---
+# Only Assets/ is tracked here; the Unity project shell lives outside this repo.
+Library/
+Temp/
+Logs/
+UserSettings/
+
+# --- Documents ---
+*.pdf

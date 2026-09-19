@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>DedicatedServer</RootNamespace>
+    <AssemblyName>DedicatedServer</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <!-- Assembly metadata (replaces the old Properties/AssemblyInfo.cs). -->
+  <PropertyGroup>
+    <Product>DedicatedServer</Product>
+    <AssemblyTitle>DedicatedServer</AssemblyTitle>
+    <Version>1.0.0</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+  </PropertyGroup>
+
+  <!--
+    Runtime settings pinned explicitly rather than left to defaults, so that
+    resource-usage measurements are reproducible across machines and runs.
+    These values match the current .NET default for a console app; change
+    them deliberately and re-baseline your numbers if you do.
+  -->
+  <PropertyGroup>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <TieredCompilation>true</TieredCompilation>
+    <!-- Portable PDBs, so dotnet-trace / dotnet-stack can resolve symbols in Release. -->
+    <DebugType>portable</DebugType>
+  </PropertyGroup>
+
+</Project>

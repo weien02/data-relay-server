@@ -1,0 +1,99 @@
+ManifestFileVersion: 0
+CRC: 1830225561
+Hashes:
+  AssetFileHash:
+    serializedVersion: 2
+    Hash: cf9fad369f73a5a25df4a2f3121b98bd
+  TypeTreeHash:
+    serializedVersion: 2
+    Hash: d89a2a5a06a0775e6e6ff723a6a4e443
+  IncrementalBuildHash:
+    serializedVersion: 2
+    Hash: cf9fad369f73a5a25df4a2f3121b98bd
+HashAppended: 0
+ClassTypes:
+- Class: 1
+  Script: {instanceID: 0}
+- Class: 21
+  Script: {instanceID: 0}
+- Class: 28
+  Script: {instanceID: 0}
+- Class: 48
+  Script: {instanceID: 0}
+- Class: 114
+  Script: {fileID: 11500000, guid: fe87c0e1cc204ed48ad3b37840f39efc, type: 3}
+- Class: 114
+  Script: {fileID: 11500000, guid: 4e29b1a8efbd4b44bb3f3716e73f07ff, type: 3}
+- Class: 114
+  Script: {fileID: 11500000, guid: 3245ec927659c4140ac4f8d17403cc18, type: 3}
+- Class: 114
+  Script: {fileID: 11500000, guid: 31a19414c41e5ae4aae2af33fee712f6, type: 3}
+- Class: 114
+  Script: {fileID: 11500000, guid: 8a8695521f0d02e499659fee002a26c2, type: 3}
+- Class: 114
+  Script: {fileID: 11500000, guid: 30649d3a9faa99c48a7b1166b86bf2a0, type: 3}
+- Class: 114
+  Script: {fileID: 11500000, guid: 5f7201a12d95ffc409449d95f23cf332, type: 3}
+- Class: 114
+  Script: {fileID: 11500000, guid: 2a4db7a114972834c8e4117be1d82ba3, type: 3}
+- Class: 114
+  Script: {fileID: 11500000, guid: 59f8146938fff824cb5fd77236b75775, type: 3}
+- Class: 114
+  Script: {fileID: 11500000, guid: 1aa08ab6e0800fa44ae55d278d1423e3, type: 3}
+- Class: 114
+  Script: {fileID: 11500000, guid: 360c7b34bc2a92b40b61625970d20b6c, type: 3}
+- Class: 114
+  Script: {fileID: 11500000, guid: d757a2fe110443b43a5f418c818bd93f, type: 3}
+- Class: 114
+  Script: {fileID: 11500000, guid: e18796b893054414f83183ce9ed26a14, type: 3}
+- Class: 114
+  Script: {fileID: 11500000, guid: 4852db9e8edffed4abedd2d413b37116, type: 3}
+- Class: 114
+  Script: {fileID: 11500000, guid: acf5c88332bd70f40bf54e2c7cc7bba6, type: 3}
+- Class: 114
+  Script: {fileID: 11500000, guid: f57076579f81a00419bc2dd6f480fc11, type: 3}
+- Class: 114
+  Script: {fileID: 11500000, guid: 2324e992d9f39fc4caefbb949137df43, type: 3}
+- Class: 115
+  Script: {instanceID: 0}
+- Class: 128
+  Script: {instanceID: 0}
+- Class: 213
+  Script: {instanceID: 0}
+- Class: 222
+  Script: {instanceID: 0}
+- Class: 224
+  Script: {instanceID: 0}
+SerializeReferenceClassIdentifiers:
+- AssemblyName: UnityEngine.CoreModule
+  ClassName: UnityEngine.Events.PersistentCallGroup
+- AssemblyName: UnityEngine.CoreModule
+  ClassName: UnityEngine.RectOffset
+- AssemblyName: UnityEngine.UI
+  ClassName: UnityEngine.UI.AnimationTriggers
+- AssemblyName: UnityEngine.UI
+  ClassName: UnityEngine.UI.Button/ButtonClickedEvent
+- AssemblyName: UnityEngine.UI
+  ClassName: UnityEngine.UI.ColorBlock
+- AssemblyName: UnityEngine.UI
+  ClassName: UnityEngine.UI.FontData
+- AssemblyName: UnityEngine.UI
+  ClassName: UnityEngine.UI.MaskableGraphic/CullStateChangedEvent
+- AssemblyName: UnityEngine.UI
+  ClassName: UnityEngine.UI.Navigation
+- AssemblyName: UnityEngine.UI
+  ClassName: UnityEngine.UI.ScrollRect/ScrollRectEvent
+- AssemblyName: UnityEngine.UI
+  ClassName: UnityEngine.UI.Scrollbar/ScrollEvent
+- AssemblyName: UnityEngine.UI
+  ClassName: UnityEngine.UI.SpriteState
+Assets:
+- Assets/GameDemo/ComplexGame/Assets/Prefabs/GUI/NormalCombatPage.prefab
+- Assets/GameDemo/ComplexGame/Assets/Textures/GUI/Items/InventoryItem_LongSword.png
+- Assets/GameDemo/ComplexGame/Assets/Textures/GUI/Items/InventoryItem_IceSword.png
+- Assets/GameDemo/ComplexGame/Assets/Textures/GUI/Items/InventoryItem_WoodenShield.png
+- Assets/GameDemo/ComplexGame/Assets/Prefabs/GUI/InventoryPage.prefab
+- Assets/GameDemo/ComplexGame/Assets/Textures/GUI/Items/InventoryItem_IronSword.png
+- Assets/GameDemo/ComplexGame/Assets/Textures/GUI/Skills/SkillIcon_10002.png
+- Assets/GameDemo/ComplexGame/Assets/Textures/GUI/Skills/SkillIcon_10001.png
+Dependencies: []

@@ -1,0 +1,40 @@
+ManifestFileVersion: 0
+CRC: 3220437279
+Hashes:
+  AssetFileHash:
+    serializedVersion: 2
+    Hash: 64df61aad886d3d419d2918e6683baf4
+  TypeTreeHash:
+    serializedVersion: 2
+    Hash: fbc473b6b0fc967a9b2c788011f1b716
+  IncrementalBuildHash:
+    serializedVersion: 2
+    Hash: 64df61aad886d3d419d2918e6683baf4
+HashAppended: 0
+ClassTypes:
+- Class: 1
+  Script: {instanceID: 0}
+- Class: 4
+  Script: {instanceID: 0}
+- Class: 21
+  Script: {instanceID: 0}
+- Class: 23
+  Script: {instanceID: 0}
+- Class: 33
+  Script: {instanceID: 0}
+- Class: 43
+  Script: {instanceID: 0}
+- Class: 48
+  Script: {instanceID: 0}
+- Class: 54
+  Script: {instanceID: 0}
+- Class: 65
+  Script: {instanceID: 0}
+- Class: 114
+  Script: {fileID: 11500000, guid: e949aedb40b48514dbcf34722bd53f1b, type: 3}
+- Class: 115
+  Script: {instanceID: 0}
+SerializeReferenceClassIdentifiers: []
+Assets:
+- Assets/GameDemo/JumpingGame/Player.prefab
+Dependencies: []

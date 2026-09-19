@@ -1,0 +1,22 @@
+ManifestFileVersion: 0
+CRC: 3261277486
+AssetBundleManifest:
+  AssetBundleInfos:
+    Info_0:
+      Name: jumpinggame
+      Dependencies: {}
+    Info_1:
+      Name: 2
+      Dependencies: {}
+    Info_2:
+      Name: 3
+      Dependencies: {}
+    Info_3:
+      Name: 0
+      Dependencies: {}
+    Info_4:
+      Name: lua
+      Dependencies: {}
+    Info_5:
+      Name: 1
+      Dependencies: {}
