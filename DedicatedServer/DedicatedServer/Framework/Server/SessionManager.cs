@@ -1,6 +1,5 @@
 using DedicatedServer.Framework.Networking;
 using System;
-using System.Collections;
 using System.Collections.Generic;
 
 namespace DedicatedServer.Framework.Server

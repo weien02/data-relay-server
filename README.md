@@ -163,11 +163,22 @@ around whole multiples of the iteration time rather than landing on 33.3 ms
 exactly. The accumulator carries the remainder forward, so the long-run average
 stays correct even though no single gap is.
 
-The loop rate itself is not stable. Iteration counts between roughly 65 and 105
+The loop rate itself is not stable. Iteration counts between roughly 65 and 110
 per second were observed on one machine across runs, because other processes can
-raise or lower the system timer granularity. This no longer changes the send
-rate, which is the point of the accumulator, but it does change the jitter, and
-it caps how high a rate the loop can actually deliver.
+raise or lower the system timer granularity. The accumulator absorbs this: the
+average send rate stays correct regardless. Measured over 10 seconds with no
+clients connected, every configured rate from 5 to 500 came out within one frame
+of its target, the missing frame being a boundary effect of the measurement
+rather than drift.
+
+What the loop rate does govern is smoothness, not average rate. A sync frame can
+only be sent from a loop iteration, so once the configured rate exceeds the loop
+rate the accumulator catches up by sending several frames from a single
+iteration. At 500 frames per second against a loop running 80 times per second
+the average was still 499.25, but those frames left in bursts of roughly six
+rather than evenly spaced. Rates at or below about 50 per second stayed smooth on
+this machine; treat anything higher as delivering the right average with uneven
+spacing.
 
 If the loop cannot keep up with the configured rate, ticks start covering more
 than one sync interval and several frames are sent in a single tick. This is
