@@ -120,6 +120,31 @@ Garbage collection and JIT tiering are pinned explicitly in
 so that resource-usage measurements stay reproducible across machines and runs.
 Changing them invalidates any previously recorded baseline.
 
+### Sync rate accuracy
+
+The tick loop measures real elapsed time and paces synchronisation frames
+through an accumulator, so the send rate holds steady no matter how fast the
+loop itself runs. Measured over 10 seconds with no clients connected, a
+configured 30 frames per second produced **29.90**.
+
+That shortfall is expected, and it is not drift. `Thread.Sleep` wakes on the
+operating system's timer granularity, about 15.6 ms on Windows by default, so
+the loop iterates roughly 65-75 times per second and a frame can only be sent
+on a whole iteration. Individual gaps therefore land on two or three
+iterations, roughly 27-46 ms, either side of the nominal 33.3 ms. The
+accumulator carries the remainder forward, so the long-run average stays
+correct even though no single gap is exactly 33.3 ms.
+
+This matters when measuring latency: the jitter shows up in the results and is
+a property of the measurement setup, not of the framework. Removing it would
+mean either raising the timer resolution, which is a Windows-only call, or
+spin-waiting, which burns CPU and would distort the resource-usage figures.
+Neither is done here, deliberately.
+
+Figures recorded before synchronisation frames were paced this way are not
+comparable, as the send rate then followed the loop speed rather than
+`SyncRatePerSecond`.
+
 ## Why .NET 8
 
 `global.json` pins the build to the 8.0.x SDK. This is deliberate:

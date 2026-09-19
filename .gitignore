@@ -13,3 +13,6 @@ UserSettings/
 
 # --- Documents ---
 *.pdf
+
+# --- Personal notes ---
+TODO.md

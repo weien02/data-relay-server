@@ -35,10 +35,19 @@ namespace DedicatedServer
             JumpingGame jumpingGame = new JumpingGame();
             jumpingGame.Initialize();
             jumpingGame.StartServer(listeningPort);
+            // Measure real elapsed time per iteration rather than assuming a fixed
+            // step. The sync frame accumulator paces itself from this value, so a
+            // hardcoded one silently decouples the effective sync rate from
+            // Configurations.SyncRatePerSecond.
+            Stopwatch tickClock = Stopwatch.StartNew();
+            double previousElapsedSeconds = 0;
             while (isRunning)
             {
-                jumpingGame.Update(0.03333f);
-                Thread.Sleep(3);
+                double elapsedSeconds = tickClock.Elapsed.TotalSeconds;
+                float deltaTime = (float)(elapsedSeconds - previousElapsedSeconds);
+                previousElapsedSeconds = elapsedSeconds;
+                jumpingGame.Update(deltaTime);
+                Thread.Sleep(1);
             }
             jumpingGame.Dispose();
         }

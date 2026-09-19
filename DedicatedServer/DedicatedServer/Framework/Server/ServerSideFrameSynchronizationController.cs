@@ -13,6 +13,11 @@ namespace DedicatedServer.Framework.Server
         private int _syncRatePerSecond;
         private float _syncInterval;
         private float _syncTimer;
+
+        // Largest amount of banked time the server will try to catch up on in one
+        // tick. Without it, a long stall (breakpoint, GC pause, machine sleeping)
+        // leaves enough banked time to fire many sync frames back to back.
+        private const float MaximumCatchUpSeconds = 0.25f;
         private uint _syncFrameNumber;
         public uint SyncFrameNumber => this._syncFrameNumber;
         private GameServer _gameServer;
@@ -43,10 +48,15 @@ namespace DedicatedServer.Framework.Server
                 _logger.LogWarning("The delta time is larger than the sync interval. This may cause the server to sync multiple frames in the current tick. delta time = " + deltaTime + ", sync interval = " + this._syncInterval);
             }
             this._syncTimer += deltaTime;
+            if(this._syncTimer > MaximumCatchUpSeconds)
+            {
+                _logger.LogWarning("Dropping " + (this._syncTimer - MaximumCatchUpSeconds) + "s of banked sync time after a long stall.");
+                this._syncTimer = MaximumCatchUpSeconds;
+            }
             while(this._syncTimer >= this._syncInterval)
             {
                 this.SyncToClients();
-                this.BeginNextSyncFrame(deltaTime);
+                this.BeginNextSyncFrame();
             }
         }
 
@@ -60,10 +70,15 @@ namespace DedicatedServer.Framework.Server
             this._gameServer.serverSideEntityManager.SyncCurrentFrameToAllClients();
         }
 
-        private void BeginNextSyncFrame(float deltaTime)
+        private void BeginNextSyncFrame()
         {
             this._syncFrameNumber++;
-            this._syncTimer -= deltaTime;
+            // One whole interval, not the elapsed delta time. Subtracting deltaTime
+            // only refunds what Tick just added, so the timer never drops below the
+            // threshold and a sync frame fires every tick regardless of
+            // SyncRatePerSecond. Carrying the remainder is what holds the long-run
+            // rate at exactly SyncRatePerSecond.
+            this._syncTimer -= this._syncInterval;
             SentPacket packet = this._gameServer.GetSentPacket(ServerToClientPacketTypes.SyncFrameBegin);
             packet.WriteUInt32(this._syncFrameNumber);
             this._gameServer.BroadcastPacket(packet);
