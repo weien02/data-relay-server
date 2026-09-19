@@ -4,6 +4,8 @@ Authoritative dedicated server for the frame-synchronisation networking
 framework. It is a headless .NET 8 console application that listens on a UDP
 port, accepts client logins, and drives the server-side simulation tick.
 
+The Unity client lives in `Unity3D Assets/` and is documented in
+[its own README](Unity3D%20Assets/README.md).
 
 ## Prerequisites
 
