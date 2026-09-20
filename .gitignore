@@ -3,13 +3,17 @@ bin/
 obj/
 .vs/
 *.user
+Tools/StressTest/runs
 
 # --- Unity ---
-# Only Assets/ is tracked here; the Unity project shell lives outside this repo.
+# The Unity client is no longer tracked here. Its source still exists in the
+# history, so earlier commits can be checked out if it is ever needed back.
+Unity3D Assets/
 Library/
 Temp/
 Logs/
 UserSettings/
+
 
 # --- Documents ---
 *.pdf
