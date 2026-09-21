@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
@@ -14,6 +15,79 @@ namespace StressTest
         Load,
         Quiesce,
         Finished,
+    }
+
+    /// <summary>
+    /// How a client is taken off the network for a reconnection episode.
+    ///
+    /// The two are not interchangeable, and which one is valid depends on how long the client
+    /// stays away. The server only clears Session.IsConnected from Session.Connect(), which is
+    /// reached from ReconnectSession, which is reached only from the login handler. Heartbeats
+    /// never revive a session. So once a blackout outlasts DisconnectThresholdSeconds the
+    /// server stops broadcasting to that session, the client stops seeing SyncFrameBegin, and
+    /// because a frame number gap is the only repair trigger it never asks for anything again.
+    /// It goes permanently deaf and mute while the server believes nothing is wrong.
+    /// </summary>
+    internal enum KillMode
+    {
+        /// <summary>Close the socket and log in again with the same client id, as a restarted process would.</summary>
+        Rejoin,
+        /// <summary>Keep the socket, stop sending, discard everything that arrives. A wifi drop.</summary>
+        Blackout,
+    }
+
+    /// <summary>
+    /// One kill-and-return of one client, with a timestamp at every step so the intervals
+    /// between them can be reported separately.
+    ///
+    /// The headline interval is resumed to viewRestored: what recovery itself costs, with the
+    /// arbitrary choice of how long the client stayed away divided out. killed to viewRestored
+    /// is what a player would actually feel.
+    /// </summary>
+    internal sealed class ReconnectEpisode
+    {
+        public int clientIndex;
+        public byte playerID;
+        public KillMode mode;
+        public double awaySecondsRequested;
+        /// <summary>True when the client stayed away long enough for the server to drop the session.</summary>
+        public bool crossedServerThreshold;
+
+        public double killedAtMs = -1;
+        public double resumedAtMs = -1;
+        public double loginResponseAtMs = -1;
+        public double syncLostRequestAtMs = -1;
+        public double syncLostResponseAtMs = -1;
+        public double viewRestoredAtMs = -1;
+        /// <summary>When some other client saw the server ask for a backup authority for this player.</summary>
+        public double serverNoticedAtMs = -1;
+
+        public int targetsTotal;
+        public int targetsOutstandingAtEnd;
+        /// <summary>The owners whose state never came back. Naming them is what makes a partial recovery diagnosable.</summary>
+        public readonly List<byte> stillStalePlayers = new List<byte>();
+        public bool loginSaidRecoverEntities;
+        public bool playerIDChanged;
+
+        /// <summary>Entity data packets and bytes taken to put the view back together.</summary>
+        public long entityDataDuringRecovery;
+        public long bytesDuringRecovery;
+
+        public string outcome = "not started";
+
+        public bool Recovered => this.viewRestoredAtMs >= 0;
+
+        /// <summary>The headline figure: how long the return itself took.</summary>
+        public double RecoveryMs => this.Recovered ? this.viewRestoredAtMs - this.resumedAtMs : -1;
+
+        /// <summary>What the player experiences, including the time spent away.</summary>
+        public double OutageMs => this.Recovered ? this.viewRestoredAtMs - this.killedAtMs : -1;
+
+        /// <summary>The literal "one round trip" the report claims, for the snapshot handshake alone.</summary>
+        public double SnapshotRoundTripMs =>
+            this.syncLostRequestAtMs >= 0 && this.syncLostResponseAtMs >= this.syncLostRequestAtMs
+                ? this.syncLostResponseAtMs - this.syncLostRequestAtMs
+                : -1;
     }
 
     /// <summary>
@@ -73,6 +147,23 @@ namespace StressTest
         public readonly uint[] respawnPublishSyncFrame = new uint[MaximumPlayerCount];
         public readonly bool[] playerIDInUse = new bool[MaximumPlayerCount];
 
+        /// <summary>
+        /// One monotonic clock for the whole run, so timestamps taken on different client
+        /// threads can be subtracted from each other.
+        /// </summary>
+        public readonly Stopwatch clock = Stopwatch.StartNew();
+
+        /// <summary>
+        /// When any client saw the server ask for a backup authority for this player, in
+        /// Stopwatch ticks, or 0 if it never did.
+        ///
+        /// This is the only way the harness can observe the moment the server itself decided a
+        /// session was dead: the ask is broadcast to everyone else, so the victim's own silence
+        /// is timed from outside. First writer wins, since the earliest observation is the one
+        /// closest to when the server actually made the decision.
+        /// </summary>
+        public readonly long[] backupAskedAtTicks = new long[MaximumPlayerCount];
+
         public SharedState()
         {
             for (int i = 0; i < MaximumPlayerCount; i++)
@@ -84,6 +175,13 @@ namespace StressTest
         public int GetPublishedSequence(byte playerID)
         {
             return Volatile.Read(ref this.publishedSequence[playerID]);
+        }
+
+        public double Milliseconds => this.clock.Elapsed.TotalMilliseconds;
+
+        public static double TicksToMilliseconds(long ticks)
+        {
+            return ticks * 1000.0 / Stopwatch.Frequency;
         }
     }
 
@@ -118,6 +216,8 @@ namespace StressTest
         public long dataBeforeCreation, unknownDataStore, parseFailures;
         public long backupAuthorityRequests;
         public long stateUpdatesSent;
+        /// <summary>Datagrams thrown away unparsed because the client was blacked out.</summary>
+        public long blackoutDatagramsDropped;
 
         // Anomalies detected live, as samples arrive.
         public long corruptSamples, misattributedSamples, regressedSamples;
@@ -164,7 +264,7 @@ namespace StressTest
     /// It mirrors the real Unity client's cadence deliberately. State is published in response
     /// to the server's SyncFrameBegin, not on a timer of its own, because that is what
     /// GameClient.SyncFrameBeginPacketHandler does, and a heartbeat goes out on every sync frame
-    /// because the server drops a session that misses DisconnectThersholdFrameCount of them.
+    /// because the server drops a session that stays silent for DisconnectThresholdSeconds.
     /// </summary>
     internal sealed class VirtualClient
     {
@@ -191,7 +291,35 @@ namespace StressTest
         private uint _syncFrameNumber;
         private bool _sawFirstSyncFrame;
         private uint _firstSyncFrameNumber;
+        // Recorded once for the life of the client and never again, so a rejoin does not move it.
+        // The respawn check in Verify excuses a missing write-once value only for an observer that
+        // genuinely arrived after it was published; a reconnected client was there at the time and
+        // is supposed to get the value back in its recovery snapshot, so it stays held to that bar.
+        private bool _firstSyncFrameEverRecorded;
         private bool _isSyncLost;
+        private bool _loginSaidRecoverEntities;
+
+        // ---- reconnection episodes --------------------------------------------------------
+        private CancellationTokenSource _loopCancellation;
+        private Task _loop;
+        /// <summary>1 while blacked out. Read on the receive loop, written by the orchestrator.</summary>
+        private int _blackout;
+        /// <summary>The episode currently in its recovery window, or null.</summary>
+        private ReconnectEpisode _activeEpisode;
+        /// <summary>1 while a recovery window is open and targets are being ticked off.</summary>
+        private int _recoveryActive;
+        /// <summary>Per owner, the sequence this client must see again before its view counts as restored. -1 = not a target.</summary>
+        private readonly int[] _recoveryRequiredSequence = new int[SharedState.MaximumPlayerCount];
+        private int _recoveryOutstanding;
+        private long _recoveryEntityDataAtStart;
+        private long _recoveryBytesAtStart;
+        /// <summary>Stopwatch ticks at which the view came back, or 0. Polled from another thread.</summary>
+        private long _recoveryRestoredTicks;
+
+        public readonly List<ReconnectEpisode> episodes = new List<ReconnectEpisode>();
+
+        /// <summary>The receive loop currently running, so a replacement started by a rejoin can be awaited with the rest.</summary>
+        public Task Loop => this._loop;
 
         /// <summary>
         /// This observer's view of every entity it knows about, keyed by runtime id. Only the
@@ -245,6 +373,46 @@ namespace StressTest
                 return false;
             }
             return await this.LoginAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        /// <summary>
+        /// Starts the receive loop under a cancellation source of this client's own, linked to
+        /// the run's. A reconnection episode has to stop one client's loop without stopping
+        /// everyone else's, which the shared token cannot do.
+        /// </summary>
+        public Task StartLoop(CancellationToken runCancellationToken)
+        {
+            this._loopCancellation = CancellationTokenSource.CreateLinkedTokenSource(runCancellationToken);
+            this._loop = Task.Run(() => this.RunAsync(this._loopCancellation.Token));
+            return this._loop;
+        }
+
+        /// <summary>
+        /// Cancels this client's receive loop, waits for it to unwind, and closes the socket.
+        /// Waiting matters: everything that follows touches state the loop owns.
+        /// </summary>
+        private async Task StopLoopAndCloseAsync()
+        {
+            try
+            {
+                this._loopCancellation?.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+            Task loop = this._loop;
+            if (loop != null)
+            {
+                try
+                {
+                    await loop.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                }
+            }
+            this._loop = null;
+            this.Close();
         }
 
         private async Task<bool> HandshakeAsync(CancellationToken cancellationToken)
@@ -327,10 +495,254 @@ namespace StressTest
             }
             this._sessionID = reader.ReadUInt16();
             this._playerID = reader.ReadByte();
-            reader.ReadBoolean();   // shouldRecoverLocalPlayerEntities, always false for a fresh client id
+            // False for a fresh client id. On a rejoin it is the server confirming it matched the
+            // client id to an existing session; if it comes back false there, the server failed to
+            // recognise the reconnect and has issued a brand new player instead.
+            this._loginSaidRecoverEntities = reader.ReadBoolean();
             this._loggedIn = true;
             Volatile.Write(ref this._shared.playerIDInUse[this._playerID], true);
             return true;
+        }
+
+        /// <summary>
+        /// Takes this client off the network and opens an episode. In blackout mode the socket
+        /// stays open and the receive loop keeps draining it, discarding everything, so the OS
+        /// buffer does not hold a backlog that would be replayed as a burst of stale packets on
+        /// return. In rejoin mode the loop is stopped and the socket closed outright.
+        /// </summary>
+        public async Task<ReconnectEpisode> KillAsync(KillMode mode, double awaySeconds, double serverThresholdSeconds)
+        {
+            ReconnectEpisode episode = new ReconnectEpisode();
+            episode.clientIndex = this._index;
+            episode.playerID = this._playerID;
+            episode.mode = mode;
+            episode.awaySecondsRequested = awaySeconds;
+            episode.crossedServerThreshold = awaySeconds >= serverThresholdSeconds;
+            episode.killedAtMs = this._shared.Milliseconds;
+            episode.outcome = "away";
+            this.episodes.Add(episode);
+            this._activeEpisode = episode;
+
+            if (mode == KillMode.Blackout)
+            {
+                Volatile.Write(ref this._blackout, 1);
+            }
+            else
+            {
+                await this.StopLoopAndCloseAsync().ConfigureAwait(false);
+            }
+            return episode;
+        }
+
+        /// <summary>
+        /// Brings the client back and starts the recovery window. Returns false if it could not
+        /// get back in at all, with the reason recorded on the episode.
+        ///
+        /// The recovery targets are fixed here rather than chased as they move: every other
+        /// player's view is required to reach the sequence that player had already published at
+        /// this instant. Owners keep publishing during recovery, so a moving target would never
+        /// be met on a busy server and the measurement would never terminate.
+        /// </summary>
+        public async Task<bool> ResumeAsync(List<VirtualClient> liveClients, CancellationToken cancellationToken)
+        {
+            ReconnectEpisode episode = this._activeEpisode;
+            if (episode == null)
+            {
+                return false;
+            }
+            byte previousPlayerID = this._playerID;
+            episode.resumedAtMs = this._shared.Milliseconds;
+
+            if (episode.mode == KillMode.Rejoin)
+            {
+                this.ResetForRejoin();
+                this.ArmRecoveryWatch(episode, liveClients);
+                bool loggedIn = await this.ConnectAndLoginAsync(cancellationToken).ConfigureAwait(false);
+                if (!loggedIn)
+                {
+                    episode.outcome = "could not log in again: " + (this.FailureReason ?? "unknown");
+                    this.DisarmRecoveryWatch(episode);
+                    return false;
+                }
+                episode.loginResponseAtMs = this._shared.Milliseconds;
+                episode.loginSaidRecoverEntities = this._loginSaidRecoverEntities;
+                episode.playerIDChanged = this._playerID != previousPlayerID;
+                if (episode.playerIDChanged)
+                {
+                    // The server did not match the client id to the old session and handed out a
+                    // new player. Nothing downstream is comparable after that.
+                    episode.outcome = "server issued a new player id (" + previousPlayerID + " to " + this._playerID + ")";
+                    this.DisarmRecoveryWatch(episode);
+                    return false;
+                }
+                // Not awaited on purpose: the loop runs for the rest of the client's life. The
+                // caller picks the task up from the Loop property and registers it for the
+                // final wait.
+                _ = this.StartLoop(cancellationToken);
+                // What the Unity client does on a login that reports recoverable entities: take
+                // the avatar back before anything else. Without it the entity stays parked
+                // mid-transfer and this client never regains the right to publish.
+                if (this._loginSaidRecoverEntities)
+                {
+                    this.SendAcquireLocalPlayerEntityAuthority();
+                }
+            }
+            else
+            {
+                this.ArmRecoveryWatch(episode, liveClients);
+                // Published after the targets, so the loop cannot start ticking them off against
+                // a half-built target set.
+                Volatile.Write(ref this._blackout, 0);
+            }
+
+            episode.outcome = "recovering";
+            return true;
+        }
+
+        /// <summary>
+        /// Clears everything a restarted process would lose, and keeps everything it would not.
+        ///
+        /// The sequence counter is deliberately kept: it is this client's published history, and
+        /// restarting it at zero would make every other observer see the owner's state go
+        /// backwards, which the verifier would correctly report as an out-of-order update.
+        /// </summary>
+        private void ResetForRejoin()
+        {
+            this.observed.Clear();
+            Volatile.Write(ref this._observedEntityCount, 0);
+            this._syncFrameNumber = 0;
+            this._sawFirstSyncFrame = false;
+            this._isSyncLost = false;
+            this._hasMyEntity = false;
+            this._myEntityRuntimeID = 0;
+            this._connectionID = Wire.ConnectionID_Connecting;
+            this._syncFramesSincePublish = 0;
+            this._loggedIn = false;
+        }
+
+        private void ArmRecoveryWatch(ReconnectEpisode episode, List<VirtualClient> liveClients)
+        {
+            int outstanding = 0;
+            for (int i = 0; i < SharedState.MaximumPlayerCount; i++)
+            {
+                this._recoveryRequiredSequence[i] = -1;
+            }
+            foreach (VirtualClient other in liveClients)
+            {
+                if (ReferenceEquals(other, this) || !other.HasEntity)
+                {
+                    continue;
+                }
+                int required = this._shared.GetPublishedSequence(other.PlayerID);
+                if (required < Sim.FirstSequence)
+                {
+                    // That owner has never published anything, so there is nothing to restore
+                    // and no sample would ever satisfy the target.
+                    continue;
+                }
+                this._recoveryRequiredSequence[other.PlayerID] = required;
+                outstanding++;
+            }
+            episode.targetsTotal = outstanding;
+            this._recoveryOutstanding = outstanding;
+            this._recoveryEntityDataAtStart = this.stats.entityDataReceived;
+            this._recoveryBytesAtStart = this.stats.bytesReceived;
+            Volatile.Write(ref this._recoveryRestoredTicks, 0);
+            if (outstanding == 0)
+            {
+                // Nothing to wait for. Count it restored immediately rather than timing out.
+                Volatile.Write(ref this._recoveryRestoredTicks, this._shared.clock.ElapsedTicks);
+                Volatile.Write(ref this._recoveryActive, 0);
+                return;
+            }
+            Volatile.Write(ref this._recoveryActive, 1);
+        }
+
+        private void DisarmRecoveryWatch(ReconnectEpisode episode)
+        {
+            Volatile.Write(ref this._recoveryActive, 0);
+            episode.targetsOutstandingAtEnd = this._recoveryOutstanding;
+            episode.stillStalePlayers.Clear();
+            for (int i = 0; i < SharedState.MaximumPlayerCount; i++)
+            {
+                if (this._recoveryRequiredSequence[i] >= 0)
+                {
+                    episode.stillStalePlayers.Add((byte)i);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Waits for the view to come back, or gives up. Returns the closed episode.
+        ///
+        /// A timeout is not a formality. If the server's SyncLostResponseBegin is lost, the
+        /// client leaves _isSyncLost set and ignores every frame from then on, with no retry
+        /// anywhere, so it never recovers at all. That outcome has to be reported as its own
+        /// bucket rather than averaged away or waited on forever.
+        /// </summary>
+        public async Task<ReconnectEpisode> AwaitRecoveryAsync(double timeoutSeconds, CancellationToken cancellationToken)
+        {
+            ReconnectEpisode episode = this._activeEpisode;
+            if (episode == null)
+            {
+                return null;
+            }
+            double deadline = this._shared.Milliseconds + timeoutSeconds * 1000.0;
+            while (this._shared.Milliseconds < deadline && !cancellationToken.IsCancellationRequested)
+            {
+                long restoredTicks = Volatile.Read(ref this._recoveryRestoredTicks);
+                if (restoredTicks != 0)
+                {
+                    episode.viewRestoredAtMs = SharedState.TicksToMilliseconds(restoredTicks);
+                    episode.outcome = "recovered";
+                    break;
+                }
+                try
+                {
+                    await Task.Delay(20, cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+            }
+
+            this.DisarmRecoveryWatch(episode);
+            episode.entityDataDuringRecovery = this.stats.entityDataReceived - this._recoveryEntityDataAtStart;
+            episode.bytesDuringRecovery = this.stats.bytesReceived - this._recoveryBytesAtStart;
+
+            if (!episode.Recovered && episode.outcome == "recovering")
+            {
+                bool sawNothingBack = episode.syncLostResponseAtMs < 0;
+                if (episode.mode == KillMode.Blackout && episode.crossedServerThreshold)
+                {
+                    // Expected, and a finding rather than a harness fault: the server dropped the
+                    // session while the client was quiet, and only a fresh login can revive it.
+                    episode.outcome = "never recovered: blacked out past the server's disconnect threshold, so the session was dropped and nothing can revive it but a new login";
+                }
+                else if (sawNothingBack)
+                {
+                    episode.outcome = "never recovered: asked for a snapshot and got no answer (the client stays sync-lost forever, with no retry)";
+                }
+                else
+                {
+                    episode.outcome = "timed out with " + this._recoveryOutstanding + " of " + episode.targetsTotal + " players still stale";
+                }
+            }
+
+            long backupTicks = Volatile.Read(ref this._shared.backupAskedAtTicks[episode.playerID]);
+            if (backupTicks != 0)
+            {
+                episode.serverNoticedAtMs = SharedState.TicksToMilliseconds(backupTicks);
+            }
+
+            this._activeEpisode = null;
+            return episode;
+        }
+
+        private void SendAcquireLocalPlayerEntityAuthority()
+        {
+            this.Send(this._writer.Begin(this._connectionID, this._sessionID, C2S.AcquireLocalPlayerEntityAuthorityRequest));
         }
 
         /// <summary>
@@ -391,6 +803,14 @@ namespace StressTest
             {
                 return;
             }
+            if (Volatile.Read(ref this._blackout) != 0)
+            {
+                // Drained and discarded, not left in the socket buffer. A real client that has
+                // lost its link never receives these at all, so holding them and replaying the
+                // backlog on return would invent a burst the network would never deliver.
+                this.stats.blackoutDatagramsDropped++;
+                return;
+            }
             this.stats.datagramsReceived++;
             this.stats.bytesReceived += length;
 
@@ -447,7 +867,7 @@ namespace StressTest
             this.stats.syncFrameBeginCount++;
 
             // The heartbeat goes out first, exactly as ClientSideFrameSynchronizationController
-            // does. Missing DisconnectThersholdFrameCount of these gets the session dropped,
+            // does. Going quiet for DisconnectThresholdSeconds gets the session dropped,
             // which would show up as packet loss that the server did not actually cause.
             this.SendHeartbeat();
 
@@ -455,7 +875,11 @@ namespace StressTest
             if (isFirstFrame)
             {
                 this._sawFirstSyncFrame = true;
-                this._firstSyncFrameNumber = syncFrameNumber;
+                if (!this._firstSyncFrameEverRecorded)
+                {
+                    this._firstSyncFrameEverRecorded = true;
+                    this._firstSyncFrameNumber = syncFrameNumber;
+                }
             }
 
             // Deliberately no special case for the first frame. The real client's frame counter
@@ -483,6 +907,11 @@ namespace StressTest
                     ByteWriter writer = this._writer.Begin(this._connectionID, this._sessionID, C2S.SyncLostRequest);
                     writer.WriteUInt32(this._syncFrameNumber);
                     this.Send(writer);
+                    ReconnectEpisode recovering = this._activeEpisode;
+                    if (recovering != null && recovering.syncLostRequestAtMs < 0)
+                    {
+                        recovering.syncLostRequestAtMs = this._shared.Milliseconds;
+                    }
                 }
                 else
                 {
@@ -507,6 +936,11 @@ namespace StressTest
             this._syncFrameNumber = lastSyncFrameNumber;
             this._isSyncLost = false;
             this.stats.syncLostResponses++;
+            ReconnectEpisode recovering = this._activeEpisode;
+            if (recovering != null && recovering.syncLostResponseAtMs < 0)
+            {
+                recovering.syncLostResponseAtMs = this._shared.Milliseconds;
+            }
         }
 
         private void HandleSyncEntityCreation(ref ByteReader reader)
@@ -713,12 +1147,45 @@ namespace StressTest
             }
 
             this.stats.RecordLag(this._shared.GetPublishedSequence(owner) - sequence);
+            this.NoteRecoveryProgress(owner, sequence);
+        }
+
+        /// <summary>
+        /// Ticks one owner off the recovery target list. Called only from the receive loop, which
+        /// is the sole owner of the target array, so the counting needs no synchronisation; only
+        /// the finished timestamp is published for the waiting orchestrator to read.
+        /// </summary>
+        private void NoteRecoveryProgress(byte owner, int sequence)
+        {
+            if (Volatile.Read(ref this._recoveryActive) == 0)
+            {
+                return;
+            }
+            int required = this._recoveryRequiredSequence[owner];
+            if (required < 0 || sequence < required)
+            {
+                return;
+            }
+            this._recoveryRequiredSequence[owner] = -1;
+            this._recoveryOutstanding--;
+            if (this._recoveryOutstanding <= 0)
+            {
+                Volatile.Write(ref this._recoveryActive, 0);
+                Volatile.Write(ref this._recoveryRestoredTicks, this._shared.clock.ElapsedTicks);
+            }
         }
 
         private void HandleAskForBackupEntityAuthority(ref ByteReader reader)
         {
             reader.ReadUInt32();        // runtime id
-            reader.ReadByte();          // the authority being replaced
+            byte authorityBeingReplaced = reader.ReadByte();
+            // The one moment the harness can observe from outside: the server has just decided
+            // that player's session is dead. First observation wins, since it is the closest to
+            // when the decision was actually made.
+            Interlocked.CompareExchange(
+                ref this._shared.backupAskedAtTicks[authorityBeingReplaced],
+                this._shared.clock.ElapsedTicks,
+                0);
             // Deliberately not answered. Taking over another player's entity would move its
             // authority to this client and invalidate the ownership model the verifier relies
             // on. The count is reported instead, because it is a direct signal that the server
@@ -780,6 +1247,12 @@ namespace StressTest
 
         private void Send(ByteWriter writer)
         {
+            if (Volatile.Read(ref this._blackout) != 0)
+            {
+                // Silence in both directions. The heartbeat stopping is what eventually makes the
+                // server declare the session dead.
+                return;
+            }
             try
             {
                 this._socket.Send(writer.Buffer, 0, writer.Length, SocketFlags.None);

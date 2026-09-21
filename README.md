@@ -121,7 +121,7 @@ Runtime behaviour is set in
 | Setting | Class default | Jumping Game demo | Purpose |
 | --- | --- | --- | --- |
 | `SyncRatePerSecond` | 30 | 30 | State synchronisation frames sent per second |
-| `DisconnectThersholdFrameCount` | 1000 | **100** | Silent frames before a client is dropped |
+| `DisconnectThresholdSeconds` | 30 | **3** | Silence before a client is dropped. Converted to a frame count against `SyncRatePerSecond` when it is checked, so it means the same duration at every sync rate |
 | `EnableAutomaticAuthorityTransfer` | true | not set | Whether entity authority migrates automatically |
 | `EnableDirtyOnlySync` | true | true | Send only changed fields rather than full state |
 | `EnableParallelWriteTickLogging` | false | false on the server, **true** in the Unity client | Verbose logging for the parallel write tick |

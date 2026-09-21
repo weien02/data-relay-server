@@ -29,6 +29,31 @@ namespace StressTest
         public string jsonPath;
         public bool allowPlayerIDOverflow;
 
+        // ---- reconnection episodes --------------------------------------------------------
+        public int killCount;
+        public KillMode killMode = KillMode.Rejoin;
+        public double killForMinSeconds = 1;
+        public double killForMaxSeconds = 8;
+        public double killNotBeforeSeconds = 2;
+        /// <summary>Slack left between the last possible return and the end of load, so recovery finishes inside the window.</summary>
+        public double killSettleSeconds = 3;
+        public double recoverTimeoutSeconds = 10;
+        public int killSeed;
+        public bool killSeedGiven;
+
+        /// <summary>
+        /// How long the server tolerates silence before it drops a session. Mirrors
+        /// Configurations.DisconnectThresholdSeconds, which the JumpingGame demo server sets to 3.
+        ///
+        /// Episodes are tagged against this so the two regimes can be reported apart: below it
+        /// the server never notices the client went away at all.
+        ///
+        /// This used to need the server's sync rate as well, because the timeout was stored as a
+        /// frame count and so meant a different duration at every rate. It is a duration now, so
+        /// the rate no longer comes into it.
+        /// </summary>
+        public double serverDisconnectThresholdSeconds = 3.0;
+
         public static bool TryParse(string[] args, out Config config, out string error)
         {
             config = new Config();
@@ -108,6 +133,38 @@ namespace StressTest
                     case "--allow-player-id-overflow":
                         config.allowPlayerIDOverflow = true;
                         break;
+                    case "--kill":
+                        if (!TryTakeInt(value, ref i, out config.killCount) || config.killCount < 0) { error = "--kill needs a non-negative number of clients"; return false; }
+                        break;
+                    case "--kill-mode":
+                        if (value == null) { error = "--kill-mode needs rejoin or blackout"; return false; }
+                        if (string.Equals(value, "rejoin", StringComparison.OrdinalIgnoreCase)) { config.killMode = KillMode.Rejoin; }
+                        else if (string.Equals(value, "blackout", StringComparison.OrdinalIgnoreCase)) { config.killMode = KillMode.Blackout; }
+                        else { error = "--kill-mode must be rejoin or blackout"; return false; }
+                        i++;
+                        break;
+                    case "--kill-for-min":
+                        if (!TryTakeDouble(value, ref i, out config.killForMinSeconds) || config.killForMinSeconds < 0) { error = "--kill-for-min needs a non-negative number of seconds"; return false; }
+                        break;
+                    case "--kill-for-max":
+                        if (!TryTakeDouble(value, ref i, out config.killForMaxSeconds) || config.killForMaxSeconds < 0) { error = "--kill-for-max needs a non-negative number of seconds"; return false; }
+                        break;
+                    case "--kill-not-before":
+                        if (!TryTakeDouble(value, ref i, out config.killNotBeforeSeconds) || config.killNotBeforeSeconds < 0) { error = "--kill-not-before needs a non-negative number of seconds"; return false; }
+                        break;
+                    case "--kill-settle":
+                        if (!TryTakeDouble(value, ref i, out config.killSettleSeconds) || config.killSettleSeconds < 0) { error = "--kill-settle needs a non-negative number of seconds"; return false; }
+                        break;
+                    case "--recover-timeout":
+                        if (!TryTakeDouble(value, ref i, out config.recoverTimeoutSeconds) || config.recoverTimeoutSeconds <= 0) { error = "--recover-timeout needs a positive number of seconds"; return false; }
+                        break;
+                    case "--kill-seed":
+                        if (!TryTakeInt(value, ref i, out config.killSeed)) { error = "--kill-seed needs a number"; return false; }
+                        config.killSeedGiven = true;
+                        break;
+                    case "--server-disconnect-seconds":
+                        if (!TryTakeDouble(value, ref i, out config.serverDisconnectThresholdSeconds) || config.serverDisconnectThresholdSeconds <= 0) { error = "--server-disconnect-seconds needs a positive number of seconds"; return false; }
+                        break;
                     case "--help":
                     case "-h":
                         error = "help";
@@ -140,6 +197,40 @@ namespace StressTest
                 error = "--clients above 255 exhausts the server's player id space (PlayerID is a byte) and crashes it."
                     + " Pass --allow-player-id-overflow if that is what you mean to test.";
                 return false;
+            }
+
+            if (config.killCount > 0)
+            {
+                // A seed is always chosen, not only when asked for, so every run prints one that
+                // reproduces it exactly. Random kill times are worthless for a report otherwise.
+                if (!config.killSeedGiven)
+                {
+                    config.killSeed = Environment.TickCount;
+                }
+                int killable = config.clientCount - config.joinLateCount;
+                if (config.killCount >= killable)
+                {
+                    error = "--kill must leave at least one of the " + killable + " starting clients alive,"
+                        + " because a killed client's recovery is judged against what the others are publishing.";
+                    return false;
+                }
+                if (config.killForMinSeconds > config.killForMaxSeconds)
+                {
+                    error = "--kill-for-min cannot be larger than --kill-for-max";
+                    return false;
+                }
+                double latestKill = config.loadSeconds - config.killForMaxSeconds - config.killSettleSeconds;
+                if (latestKill <= config.killNotBeforeSeconds)
+                {
+                    error = "there is no room to kill anyone: --duration " + config.loadSeconds.ToString(CultureInfo.InvariantCulture)
+                        + "s has to cover --kill-not-before (" + config.killNotBeforeSeconds.ToString(CultureInfo.InvariantCulture)
+                        + "s) plus --kill-for-max (" + config.killForMaxSeconds.ToString(CultureInfo.InvariantCulture)
+                        + "s) plus --kill-settle (" + config.killSettleSeconds.ToString(CultureInfo.InvariantCulture)
+                        + "s). Raise --duration or lower one of those."
+                        + " Without the slack a reconnect would still be in flight when the run ends,"
+                        + " and the final cross check would report the harness's own timing as a fault.";
+                    return false;
+                }
             }
             return true;
         }
@@ -184,7 +275,26 @@ namespace StressTest
             "  --client-id-base N     first client id (default unique per run; reusing one against a\n" +
             "                         running server resumes that run's sessions instead of new ones)\n" +
             "  --json PATH            also write the full report as JSON\n" +
-            "  --allow-player-id-overflow   permit --clients above 255\n";
+            "  --allow-player-id-overflow   permit --clients above 255\n" +
+            "\n" +
+            "reconnection episodes (kill a client mid-run and measure how long it takes to come back)\n" +
+            "\n" +
+            "  --kill N               kill N clients once each, at random moments (default 0, off)\n" +
+            "  --kill-mode MODE       rejoin (close the socket and log in again, like a restarted\n" +
+            "                         process) or blackout (keep the socket, go silent, like losing\n" +
+            "                         wifi). Default rejoin.\n" +
+            "  --kill-for-min S       shortest time a killed client stays away (default 1)\n" +
+            "  --kill-for-max S       longest time a killed client stays away (default 8)\n" +
+            "  --kill-not-before S    earliest kill, in seconds into the load (default 2)\n" +
+            "  --kill-settle S        slack left between the last return and the end of load so a\n" +
+            "                         recovery cannot run past the run (default 3)\n" +
+            "  --recover-timeout S    give up on an episode after this long (default 10)\n" +
+            "  --kill-seed N          seed for the kill times and away times. One is always chosen\n" +
+            "                         and printed, so any run can be replayed exactly.\n" +
+            "  --server-disconnect-seconds S  the server's DisconnectThresholdSeconds (default 3, which\n" +
+            "                         is what the JumpingGame demo server sets). This is the threshold an\n" +
+            "                         away time is compared against: below it the server never notices\n" +
+            "                         the client left at all.\n";
     }
 
     /// <summary>
@@ -233,6 +343,19 @@ namespace StressTest
             lock (this._gate)
             {
                 this._clients.Add(client);
+                this._loops.Add(loop);
+            }
+        }
+
+        /// <summary>
+        /// Registers a replacement receive loop for a client that is already in the set, so the
+        /// final wait covers it. A rejoin starts a new loop but must not add the client twice,
+        /// or the cross check would compare it against itself.
+        /// </summary>
+        public void AddLoop(Task loop)
+        {
+            lock (this._gate)
+            {
                 this._loops.Add(loop);
             }
         }
@@ -318,6 +441,25 @@ namespace StressTest
             Console.WriteLine("target          " + config.serverAddress + ":" + config.serverPort);
             Console.WriteLine("clients         " + config.clientCount);
             Console.WriteLine("client id base  " + config.clientIDBase);
+            if (config.killCount > 0)
+            {
+                Console.WriteLine("kills           " + config.killCount + " clients, " + config.killMode.ToString().ToLowerInvariant()
+                    + ", away " + config.killForMinSeconds.ToString("0.#", CultureInfo.InvariantCulture)
+                    + "-" + config.killForMaxSeconds.ToString("0.#", CultureInfo.InvariantCulture) + "s"
+                    + ", seed " + config.killSeed);
+                Console.WriteLine("server drops at " + config.serverDisconnectThresholdSeconds.ToString("0.00", CultureInfo.InvariantCulture)
+                    + "s of silence");
+                if (config.killMode == KillMode.Blackout && config.killForMaxSeconds >= config.serverDisconnectThresholdSeconds)
+                {
+                    Console.WriteLine();
+                    Console.WriteLine("  note: some blackouts will outlast that threshold. The server only clears a");
+                    Console.WriteLine("        session's disconnected flag on a fresh login, so a client that merely goes");
+                    Console.WriteLine("        quiet for longer than this can never come back: it stops being broadcast to,");
+                    Console.WriteLine("        never sees another frame number, and a frame gap is the only thing that");
+                    Console.WriteLine("        triggers a repair. Those episodes are reported as never recovered, and that");
+                    Console.WriteLine("        is the framework's behaviour, not a fault in this harness.");
+                }
+            }
             Console.WriteLine();
 
             // Clients held back to join mid-run. They are the probe for what a client that joins
@@ -367,8 +509,14 @@ namespace StressTest
             Task lateJoins = config.joinLateCount > 0
                 ? JoinLateAsync(clients, initialCount, liveSet, config, cancellation.Token)
                 : Task.CompletedTask;
+            // Victims are drawn from the clients that started the run, never from the late
+            // joiners, which do not exist yet when the schedule is drawn up.
+            Task kills = config.killCount > 0
+                ? RunKillsAsync(live, liveSet, config, cancellation.Token)
+                : Task.CompletedTask;
             LoadWindow loadWindow = await RunLoadAsync(liveSet, config, cancellation.Token).ConfigureAwait(false);
             await lateJoins.ConfigureAwait(false);
+            await kills.ConfigureAwait(false);
             live = liveSet.Snapshot();
 
             // ---- phase 4: quiesce ------------------------------------------------------------
@@ -410,7 +558,7 @@ namespace StressTest
             {
                 return false;
             }
-            liveSet.Add(client, Task.Run(() => client.RunAsync(cancellationToken)));
+            liveSet.Add(client, client.StartLoop(cancellationToken));
             return true;
         }
 
@@ -445,6 +593,87 @@ namespace StressTest
             }
             Console.WriteLine("  (" + joined + " late clients joined at "
                 + config.joinLateAfterSeconds.ToString("0.#", CultureInfo.InvariantCulture) + "s)");
+        }
+
+        /// <summary>
+        /// Schedules the reconnection episodes and runs them.
+        ///
+        /// Each victim gets its own task rather than all of them running from one queue, so two
+        /// episodes whose windows overlap really do overlap. Several clients recovering at once
+        /// is the interesting case: SyncEntitiesToSingleClient sends one packet per entity, all
+        /// inside a single server tick, so simultaneous returns land as one burst.
+        /// </summary>
+        private static async Task RunKillsAsync(List<VirtualClient> candidates, LiveSet liveSet, Config config, CancellationToken cancellationToken)
+        {
+            Random random = new Random(config.killSeed);
+            double latestKill = config.loadSeconds - config.killForMaxSeconds - config.killSettleSeconds;
+
+            // Fisher-Yates over the candidates, so each client is picked at most once.
+            List<VirtualClient> pool = new List<VirtualClient>(candidates);
+            for (int i = pool.Count - 1; i > 0; i--)
+            {
+                int j = random.Next(i + 1);
+                VirtualClient swap = pool[i];
+                pool[i] = pool[j];
+                pool[j] = swap;
+            }
+
+            int victimCount = Math.Min(config.killCount, pool.Count);
+            List<Task> running = new List<Task>(victimCount);
+            for (int i = 0; i < victimCount; i++)
+            {
+                VirtualClient victim = pool[i];
+                double killAt = config.killNotBeforeSeconds + random.NextDouble() * (latestKill - config.killNotBeforeSeconds);
+                double awayFor = config.killForMinSeconds + random.NextDouble() * (config.killForMaxSeconds - config.killForMinSeconds);
+                running.Add(RunOneEpisodeAsync(victim, liveSet, config, killAt, awayFor, cancellationToken));
+            }
+            await Task.WhenAll(running).ConfigureAwait(false);
+        }
+
+        private static async Task RunOneEpisodeAsync(VirtualClient victim, LiveSet liveSet, Config config, double killAtSeconds, double awaySeconds, CancellationToken cancellationToken)
+        {
+            await DelaySafeAsync(killAtSeconds, cancellationToken).ConfigureAwait(false);
+            if (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+            if (!victim.HasEntity)
+            {
+                // Nothing to measure: it never got as far as owning an avatar, so there is no
+                // authority to lose and nothing for the others to have been watching.
+                Console.WriteLine("  [kill] client " + victim.Index + " skipped, it never owned an avatar");
+                return;
+            }
+
+            double thresholdSeconds = config.serverDisconnectThresholdSeconds;
+            ReconnectEpisode episode = await victim.KillAsync(config.killMode, awaySeconds, thresholdSeconds).ConfigureAwait(false);
+            Console.WriteLine("  [kill] player " + episode.playerID + " " + config.killMode.ToString().ToLowerInvariant()
+                + " for " + awaySeconds.ToString("0.0", CultureInfo.InvariantCulture) + "s"
+                + (episode.crossedServerThreshold ? " (past the server's " + thresholdSeconds.ToString("0.0", CultureInfo.InvariantCulture) + "s threshold)" : " (under the threshold)"));
+
+            await DelaySafeAsync(awaySeconds, cancellationToken).ConfigureAwait(false);
+            if (cancellationToken.IsCancellationRequested)
+            {
+                episode.outcome = "run ended while the client was still away";
+                return;
+            }
+
+            bool back = await victim.ResumeAsync(liveSet.Snapshot(), cancellationToken).ConfigureAwait(false);
+            if (back && victim.Loop != null)
+            {
+                liveSet.AddLoop(victim.Loop);
+            }
+            if (!back)
+            {
+                Console.WriteLine("  [back] player " + episode.playerID + " FAILED: " + episode.outcome);
+                return;
+            }
+
+            await victim.AwaitRecoveryAsync(config.recoverTimeoutSeconds, cancellationToken).ConfigureAwait(false);
+            Console.WriteLine("  [back] player " + episode.playerID + " "
+                + (episode.Recovered
+                    ? "view restored in " + episode.RecoveryMs.ToString("0", CultureInfo.InvariantCulture) + " ms"
+                    : episode.outcome));
         }
 
         private static async Task<int> WaitForSpawnsAsync(List<VirtualClient> live, Config config, CancellationToken cancellationToken)

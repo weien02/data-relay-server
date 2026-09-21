@@ -33,6 +33,39 @@ dotnet run -c Release -- --clients 40 --duration 30
 
 Exit code is 0 on pass, 1 on a failed cross check, 2 on a setup problem.
 
+### Reconnection episodes
+
+`--kill N` takes N clients off the network at random moments during the load and brings them back,
+timing how long each one needs before its view of everyone else is correct again.
+
+| option | meaning |
+| --- | --- |
+| `--kill N` | kill N clients, once each, at random moments. Off by default. |
+| `--kill-mode MODE` | `rejoin` closes the socket and logs in again, like a restarted process. `blackout` keeps the socket, goes silent and discards what arrives, like losing wifi. Default `rejoin`. |
+| `--kill-for-min S` / `--kill-for-max S` | range the away time is drawn from (default 1 to 8 seconds). |
+| `--kill-not-before S` | earliest kill, in seconds into the load (default 2). |
+| `--kill-settle S` | slack left between the last return and the end of load, so a recovery cannot still be running when the run ends (default 3). |
+| `--recover-timeout S` | give up on an episode after this long (default 10). |
+| `--kill-seed N` | seed for the kill times and away times. One is always chosen and printed, so any run replays exactly. |
+| `--server-disconnect-seconds S` | the server's `DisconnectThresholdSeconds`, the silence threshold each away time is compared against. Default 3, which is what the demo server sets. |
+
+**The threshold matters more than anything else here.** The server drops a session after
+`DisconnectThresholdSeconds` without a heartbeat — 3 seconds on the demo server. Below that the
+server never learns the client went away at all, and the return is pure sync-loss repair. Above it
+the session is marked disconnected, the server broadcasts `AskForBackupEntityAuthority`, and only a
+fresh login can bring the client back. Episodes are tagged and reported separately on that line.
+
+This used to be configured as a frame count, which meant the real timeout moved with the server's
+`--sync-rate`: the same 100 frames was 3.3s at 30 Hz but 1.7s at 60 Hz. It is a duration now, so
+the sync rate no longer comes into it and this flag is the only one the harness needs.
+
+A `blackout` that outlasts the threshold **can never recover**, and the harness says so rather than
+pretending it timed out. `Session.IsConnected` is only set back to true from `Session.Connect()`,
+which is reached only from the login handler, so heartbeats alone never revive a session. The
+client stops being broadcast to, never sees another frame number, and a frame-number gap is the
+only thing that triggers a repair — it goes permanently deaf and mute while the server believes
+nothing is wrong. Use `rejoin` for anything longer than the threshold.
+
 ### Restart the server between runs
 
 The server never forgets a session. `SessionManager.GetSessionID` matches a login by client id, so
@@ -46,7 +79,7 @@ runs out. Restart it between runs and the numbers stay comparable.
 Each simulated user owns one avatar (registry id 0, the JumpingGame player) with
 `Full_LocalPlayer` authority, and mirrors the real Unity client's cadence: it publishes state in
 response to `SyncFrameBegin` rather than on a clock of its own, and it heartbeats on every sync
-frame because the server drops a session that misses `DisconnectThersholdFrameCount` of them.
+frame because the server drops a session that stays silent for `DisconnectThresholdSeconds`.
 
 The published state is a pure function of `(playerID, sequenceNumber)`, built only from values that
 are exactly representable as 32 bit floats. That is what allows the verifier to compare with `==`
@@ -91,6 +124,37 @@ and pulls a full snapshot. This is load-bearing: without it a joining client wou
 the players already present exist, because entity creation is broadcast only in the frame the
 entity is created. **mid-run repairs** should be zero; each one is a full resend that also heals any
 earlier loss for that client, so a non-zero count means the divergence figures are a lower bound.
+
+**reconnection** — only present with `--kill`. `back in` is the headline: from the moment the
+client came back to the moment its view of every other player was correct again, with the
+arbitrary choice of how long it stayed away divided out. `outage` is the same thing measured from
+the kill, which is what a player would actually feel. `snapshot round trip` is the narrow claim the
+project's report makes — request sent to response received — and it is normally far smaller than
+`back in`; the gap between the two is the interesting number, because it is the part the "recovery
+is one round trip" claim leaves out.
+
+Distributions are reported, never a bare mean, and `recovered N of M` is checked first. A recovery
+that usually takes 30 ms and occasionally never finishes is a different system from one that always
+takes 200 ms, and an average cannot tell them apart.
+
+`still stale: player X` on a failed episode names the owners whose state never came back. That is
+usually the symptom of the snapshot filter described below rather than packet loss.
+
+### The recovery snapshot is not actually a full snapshot
+
+`SyncEntitiesToSingleClient` is documented as sending the client everything it needs, but
+`SyncEntitiesDataInInterval`
+([ServerSideEntityManager.cs:142](../../DedicatedServer/DedicatedServer/Framework/Server/ServerSideEntityManager.cs#L142))
+filters on `LastModifiedFrameNumber` being inside the client's missed window *before* `syncFullData`
+is ever consulted. `syncFullData` only decides whether full or dirty fields are written for an
+entity that already passed the filter. So **an entity that stopped changing before the client's
+loss began is not resent at all**, and if the client missed its last update it stays wrong forever.
+
+`rejoin` hides this, because it resets the client's frame counter to zero, which makes the filter
+pass everything. `blackout` keeps its frame number and so is exposed to it. To see it: run
+`--kill-mode blackout` with a mix of away times, so that one client wedges past the threshold and
+stops publishing, and watch a second, under-threshold client fail to re-learn that first client's
+avatar.
 
 ### Watch the server log too
 

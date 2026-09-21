@@ -109,9 +109,9 @@ namespace DedicatedServer.Framework.Server
             while (sessions.MoveNext())
             {
                 Session session = sessions.Current;
-                if(session.IsConnected && currentSyncFrameNumber - session.lastHeartbeatFrameNumber >= this._configurations.DisconnectThersholdFrameCount)
+                if(session.IsConnected && currentSyncFrameNumber - session.lastHeartbeatFrameNumber >= this._configurations.DisconnectThresholdFrameCount)
                 {
-                    _logger.Log("disconnect " + currentSyncFrameNumber + " " + session.lastHeartbeatFrameNumber + " " + this._configurations.DisconnectThersholdFrameCount);
+                    _logger.Log("disconnect " + currentSyncFrameNumber + " " + session.lastHeartbeatFrameNumber + " " + this._configurations.DisconnectThresholdFrameCount);
                     session.Disconnect();
                     this.serverSideEntityManager.OnPlayerDisconnected(session.playerID);
                 }

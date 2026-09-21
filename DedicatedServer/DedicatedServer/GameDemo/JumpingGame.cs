@@ -29,7 +29,9 @@ namespace DedicatedServer.Demo.JumpingGame
 
         private void ConfigureFramework()
         {
-            this.configurations.DisconnectThersholdFrameCount = 100;
+            // Was 100 frames, which at the default 30Hz was 3.3s. Now a duration, so it holds
+            // whatever the server's --sync-rate is set to.
+            this.configurations.DisconnectThresholdSeconds = 3.0;
             this.configurations.EnableParallelWriteTickLogging = false;
             this.configurations.EnableDirtyOnlySync = true;
             Configurations.SetGlobalConfigurations(this.configurations);
