@@ -27,6 +27,9 @@ namespace DedicatedServer.Demo.JumpingGame
 #endif
         public readonly Configurations configurations = Configurations.GetDefaultConfigurations();
 
+        /// <summary>Packets the server deliberately skipped because of fault injection.</summary>
+        public long FaultDroppedPacketCount => this._gameServer?.FaultDroppedPacketCount ?? 0;
+
         private void ConfigureFramework()
         {
             // Was 100 frames, which at the default 30Hz was 3.3s. Now a duration, so it holds

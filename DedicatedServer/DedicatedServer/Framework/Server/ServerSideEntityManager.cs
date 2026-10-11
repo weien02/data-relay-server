@@ -158,7 +158,7 @@ namespace DedicatedServer.Framework.Server
             List<SentPacket> packets = this.SyncEntitiesDataInInterval(currentSyncFrame, currentSyncFrame, false);
             foreach(SentPacket packet in packets)
             {
-                this._gameServer.BroadcastPacket(packet);
+                this._gameServer.BroadcastPacket(packet, this._configurations.FaultEntityDataDropPercent);
             }
         }
 

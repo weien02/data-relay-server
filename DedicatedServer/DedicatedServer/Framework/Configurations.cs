@@ -43,6 +43,17 @@ namespace DedicatedServer.Framework
         public bool EnableParallelWriteTickLogging { get; set; }
         public int ParallelWriteTickWorkerThreadLimit { get; set; }
 
+        /// <summary>
+        /// Fault injection for testing only: the percentage of per-frame entity data broadcasts
+        /// the server silently skips, decided independently for every recipient. 0 disables it.
+        ///
+        /// Only the regular per-frame broadcast is affected. SyncFrameBegin, creations,
+        /// deletions and the sync-lost snapshot are left alone, so a client loses data without
+        /// seeing a frame number gap. That is the loss the framework cannot detect, and it exists
+        /// so the stress test's "stale forever" check can be shown to fire.
+        /// </summary>
+        public double FaultEntityDataDropPercent { get; set; }
+
         private Configurations()
         {
             this.SyncRatePerSecond = 30;

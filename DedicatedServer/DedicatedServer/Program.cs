@@ -1,6 +1,7 @@
 using DedicatedServer.Demo.JumpingGame;
 using System;
 using System.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using System.Threading;
 
@@ -9,7 +10,7 @@ namespace DedicatedServer
     class Program
     {
         private const ushort DefaultListeningPort = 5000;
-        private const string Usage = "usage: DedicatedServer [listeningPort] [--sync-rate framesPerSecond]";
+        private const string Usage = "usage: DedicatedServer [listeningPort] [--sync-rate framesPerSecond] [--fault-drop-entity-data percent]";
 
         /// <summary>
         /// How long before a sync frame is due to stop sleeping and spin instead. Even with the
@@ -43,11 +44,24 @@ namespace DedicatedServer
             ushort listeningPort = DefaultListeningPort;
             // 0 means "leave whatever the demo configured alone".
             int syncRatePerSecond = 0;
+            // Fault injection for the stress test; 0 means off.
+            double faultDropEntityDataPercent = 0;
             for (int i = 0; i < args.Length; i++)
             {
                 if (args[i] == "--sync-rate")
                 {
                     if (i + 1 >= args.Length || !int.TryParse(args[i + 1], out syncRatePerSecond) || syncRatePerSecond <= 0)
+                    {
+                        Console.WriteLine(Usage);
+                        return;
+                    }
+                    i++;
+                }
+                else if (args[i] == "--fault-drop-entity-data")
+                {
+                    if (i + 1 >= args.Length
+                        || !double.TryParse(args[i + 1], NumberStyles.Float, CultureInfo.InvariantCulture, out faultDropEntityDataPercent)
+                        || faultDropEntityDataPercent < 0 || faultDropEntityDataPercent > 100)
                     {
                         Console.WriteLine(Usage);
                         return;
@@ -90,6 +104,13 @@ namespace DedicatedServer
             }
             // Recorded per run so a captured log says which rate produced it.
             Console.WriteLine("sync rate " + jumpingGame.configurations.SyncRatePerSecond + " frames/second");
+            if (faultDropEntityDataPercent > 0)
+            {
+                jumpingGame.configurations.FaultEntityDataDropPercent = faultDropEntityDataPercent;
+                // Loud on purpose: a server left running with this on looks like a real bug.
+                Console.WriteLine("FAULT INJECTION ON: dropping " + faultDropEntityDataPercent.ToString(CultureInfo.InvariantCulture)
+                    + "% of entity data broadcasts per client");
+            }
             jumpingGame.StartServer(listeningPort);
             // Measure real elapsed time per iteration rather than assuming a fixed
             // step. The sync frame accumulator paces itself from this value, so a
@@ -157,6 +178,10 @@ namespace DedicatedServer
                 {
                     TimeEndPeriod(1);
                 }
+            }
+            if (faultDropEntityDataPercent > 0)
+            {
+                Console.WriteLine("fault injection dropped " + jumpingGame.FaultDroppedPacketCount + " entity data packets");
             }
             jumpingGame.Dispose();
         }

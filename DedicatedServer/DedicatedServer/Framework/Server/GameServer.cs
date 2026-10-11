@@ -24,6 +24,10 @@ namespace DedicatedServer.Framework.Server
         internal readonly ServerSideEntityManager serverSideEntityManager;
         internal readonly ServerSideFrameSynchronizationController frameSyncController;
 
+        private readonly Random _faultRandom = new Random();
+        /// <summary>Packets deliberately not sent because of fault injection.</summary>
+        public long FaultDroppedPacketCount { get; private set; }
+
         public GameServer()
         {
             this._configurations = Configurations.GlobalConfigurations;
@@ -239,6 +243,16 @@ namespace DedicatedServer.Framework.Server
 
         internal void BroadcastPacket(SentPacket packet)
         {
+            this.BroadcastPacket(packet, 0);
+        }
+
+        /// <summary>
+        /// Broadcasts to every connected session, except that each recipient is skipped with
+        /// probability dropPercent. Only ever non-zero for fault injection; see
+        /// Configurations.FaultEntityDataDropPercent.
+        /// </summary>
+        internal void BroadcastPacket(SentPacket packet, double dropPercent)
+        {
             int clientCount = 0;
             IEnumerator<Session> enumerator = this._sessionManager.GetSessions();
             while (enumerator.MoveNext())
@@ -246,6 +260,13 @@ namespace DedicatedServer.Framework.Server
                 Session session = enumerator.Current;
                 if (!session.IsConnected)
                 {
+                    continue;
+                }
+                if (dropPercent > 0 && this._faultRandom.NextDouble() * 100.0 < dropPercent)
+                {
+                    // Not queued, so not counted: the packet's dispose count below stays equal
+                    // to the number of sessions that will really send it.
+                    this.FaultDroppedPacketCount++;
                     continue;
                 }
                 bool canSend = session.QueuedSendPacket(packet);
