@@ -7,38 +7,57 @@ port, accepts client logins, and drives the server-side simulation tick.
 
 ## Prerequisites
 
-The **.NET 8 SDK (x64)** is the only requirement. Confirm it is present:
+The **.NET 8 SDK** is the only requirement. It runs on Windows, macOS and Linux.
+Confirm it is present:
 
-```powershell
+```sh
 dotnet --list-sdks
 ```
 
 You should see an `8.0.x` entry, for example:
 
 ```
-8.0.425 [C:\Program Files\dotnet\sdk]
+8.0.425 [C:\Program Files\dotnet\sdk]          # Windows
+8.0.425 [/usr/local/share/dotnet/sdk]          # macOS
+8.0.425 [/usr/lib/dotnet/sdk]                  # Linux (path varies by distribution)
 ```
 
-If .NET 8 is missing, install it from
-<https://dotnet.microsoft.com/download/dotnet/8.0>. Choose the **SDK**, not the
-runtime alone — the SDK is needed to compile, and it includes the runtime.
+If .NET 8 is missing, install the **SDK**, not the runtime alone. The SDK is
+needed to compile, and it includes the runtime. Pick the build that matches your
+CPU: **x64** for Intel and AMD, **Arm64** for Apple Silicon and ARM machines.
+
+| Platform | How to install |
+| --- | --- |
+| Windows | Installer from <https://dotnet.microsoft.com/download/dotnet/8.0> |
+| macOS | `.pkg` installer from <https://dotnet.microsoft.com/download/dotnet/8.0>. Then open a new terminal so `dotnet` is on the `PATH` |
+| Linux | Your distribution's package (for example `sudo apt install dotnet-sdk-8.0` on Ubuntu), see <https://learn.microsoft.com/dotnet/core/install/linux> |
+| Any, without admin rights | `./dotnet-install.sh --channel 8.0` (or `dotnet-install.ps1` on Windows) from <https://dot.net/v1/dotnet-install.sh>, which installs to `~/.dotnet` |
 
 Newer SDKs may also be installed alongside; `global.json` pins the build to the
 8.0.x line regardless. See [Why .NET 8](#why-net-8).
 
 ## Run the server
 
-From the repository root:
+From the repository root, in any shell (PowerShell, cmd, bash, zsh):
 
-```powershell
-dotnet run --project "DedicatedServer\DedicatedServer" -c Release -- 5000
+```sh
+dotnet run --project DedicatedServer/DedicatedServer -c Release -- 5000
 ```
 
 This compiles and launches in one step. `5000` is the UDP port to listen on and
-may be omitted, in which case the server defaults to port 5000.
+may be omitted, in which case the server defaults to port 5000. Forward slashes
+work on every platform, including Windows.
 
-On first launch Windows Firewall may ask whether to allow the application
-through. Accept it, or clients will not be able to reach the server.
+The first time the server listens on the network, the operating system's
+firewall may get involved:
+
+- **Windows**: Windows Firewall asks whether to allow the application through. Accept it.
+- **macOS**: if the macOS firewall is on, it asks whether to accept incoming network connections. Allow it.
+- **Linux**: there is usually no prompt. If a firewall is active, open the port yourself, for example
+  `sudo ufw allow 5000/udp` or `sudo firewall-cmd --add-port=5000/udp`.
+
+Without this, clients on other machines cannot reach the server. Connections
+from the same machine (`127.0.0.1`) are not affected.
 
 ### Expected output
 
@@ -61,8 +80,8 @@ above because nothing overrode it. An optional `--sync-rate` changes it for a
 single run, which saves editing and rebuilding when sweeping rates during
 measurement:
 
-```powershell
-dotnet run --project "DedicatedServer\DedicatedServer" -c Release -- 5000 --sync-rate 60
+```sh
+dotnet run --project DedicatedServer/DedicatedServer -c Release -- 5000 --sync-rate 60
 ```
 
 That run reports `sync rate 60 frames/second` instead. The port and
@@ -72,24 +91,37 @@ actually deliver.
 
 ### Stop the server
 
-Press **Ctrl+C** in the console. This triggers a graceful shutdown that
-releases the listening socket rather than killing the process outright.
+Press **Ctrl+C** in the terminal, on any platform. This triggers a graceful
+shutdown that releases the listening socket rather than killing the process
+outright.
+
+On macOS and Linux, a server started in the background from a script (with `&`)
+may ignore Ctrl+C and `kill -INT`, because non-interactive shells start
+background jobs with that signal ignored. Stop such a server with
+`kill <pid>` instead, using the process id it prints on startup.
 
 ## Build and run as separate steps
 
 Useful when taking measurements, so that compilation is not part of the timed
 run.
 
-```powershell
+```sh
 # Build once
-dotnet build "DedicatedServer\DedicatedServer.sln" -c Release
+dotnet build DedicatedServer/DedicatedServer.sln -c Release
 
-# Run the produced executable as many times as needed
-.\DedicatedServer\DedicatedServer\bin\Release\net8.0\DedicatedServer.exe 5000
+# Run the build as many times as needed (same command on every platform)
+dotnet DedicatedServer/DedicatedServer/bin/Release/net8.0/DedicatedServer.dll 5000
 ```
 
+The build also produces a native launcher you can run directly:
+
+| Platform | Command |
+| --- | --- |
+| Windows | `.\DedicatedServer\DedicatedServer\bin\Release\net8.0\DedicatedServer.exe 5000` |
+| macOS / Linux | `./DedicatedServer/DedicatedServer/bin/Release/net8.0/DedicatedServer 5000` |
+
 Use `-c Debug` in place of `-c Release` for a debug build; the output path
-changes to `bin\Debug\net8.0\` to match.
+changes to `bin/Debug/net8.0/` to match.
 
 Always measure against a **Release** build. Debug builds disable optimisations
 and produce misleading performance figures.
@@ -108,7 +140,9 @@ Ctrl+C reaches the shutdown handler. Breakpoints in the tick loop and packet
 handlers behave normally.
 
 A **Dedicated server (Release, port 5000)** configuration is also provided.
-**Ctrl+Shift+B** runs a debug build without launching.
+**Ctrl+Shift+B** (**Cmd+Shift+B** on macOS) runs a debug build without
+launching. The launch configurations start the `.dll` through `dotnet`, so they
+work unchanged on every platform.
 
 To change the port, edit the `"args": ["5000"]` line in
 [.vscode/launch.json](.vscode/launch.json).
@@ -155,15 +189,31 @@ loop itself runs. Measured over 10 seconds with no clients connected, a
 configured 30 frames per second produced **29.90**.
 
 That shortfall is expected, and it is not drift. `Thread.Sleep` wakes on the
-operating system's timer granularity, about 15.6 ms on Windows by default, so a
-frame can only be sent on a whole loop iteration and individual gaps cluster
-around whole multiples of the iteration time rather than landing on 33.3 ms
-exactly. The accumulator carries the remainder forward, so the long-run average
-stays correct even though no single gap is.
+operating system's timer granularity, so a frame can only be sent on a whole
+loop iteration and individual gaps cluster around whole multiples of the
+iteration time rather than landing on 33.3 ms exactly. The accumulator carries
+the remainder forward, so the long-run average stays correct even though no
+single gap is.
 
-The loop rate itself is not stable. Iteration counts between roughly 65 and 110
-per second were observed on one machine across runs, because other processes can
-raise or lower the system timer granularity. The accumulator absorbs this: the
+How coarse that granularity is depends on the platform:
+
+| Platform | Default sleep granularity | What the server does about it |
+| --- | --- | --- |
+| Windows | About 15.6 ms | Requests 1 ms resolution for its own process (`timeBeginPeriod`) at startup and releases it on exit |
+| macOS | About 1 ms | Nothing extra needed |
+| Linux | About 1 ms or finer | Nothing extra needed |
+
+On every platform the loop also stops sleeping 1.5 ms before a sync frame is due
+and spin-waits for the rest, since even a 1 ms sleep can overshoot. Between
+frames it sleeps in 4 ms steps so incoming packets are still read promptly.
+
+The 29.90 figure above and the loop-rate observations below were recorded on
+Windows. On macOS the stress test measured **30.0** frames per second at the
+default rate with 40 clients connected.
+
+The loop rate itself is not stable on Windows. Iteration counts between roughly
+65 and 110 per second were observed on one machine across runs, because other
+processes can raise or lower the system timer granularity. The accumulator absorbs this: the
 average send rate stays correct regardless. Measured over 10 seconds with no
 clients connected, every configured rate from 5 to 500 came out within one frame
 of its target, the missing frame being a boundary effect of the measurement
@@ -194,10 +244,10 @@ on that machine, and the resulting frame timing will be uneven. At 30 frames per
 second it stays silent.
 
 The jitter matters when measuring latency: it shows up in the results and is a
-property of the measurement setup, not of the framework. Removing it would mean
-either raising the timer resolution, which is a Windows-only call, or
-spin-waiting, which burns CPU and would distort the resource-usage figures.
-Neither is done here, deliberately.
+property of the measurement setup, not of the framework. The short spin-wait
+before each frame reduces it at the cost of a little CPU, which shows up in
+resource-usage figures. Expect the jitter to differ between Windows, macOS and
+Linux, and compare latency figures only between runs on the same platform.
 
 Figures recorded before synchronisation frames were paced this way are not
 comparable, as the send rate then followed the loop speed rather than
@@ -235,21 +285,39 @@ DedicatedServer/DedicatedServer/
 
 An installed SDK has corrupted workload manifest files. Confirm `global.json`
 is present at the repository root and that `dotnet --version` reports an
-`8.0.x` version. If a broken SDK is still being selected, repair it through
-Settings → Apps → the relevant .NET SDK entry → Modify → Repair.
+`8.0.x` version. If a broken SDK is still being selected, repair or reinstall it:
+
+- **Windows**: Settings → Apps → the relevant .NET SDK entry → Modify → Repair.
+- **macOS**: run the .NET 8 SDK `.pkg` installer again.
+- **Linux**: reinstall the package, for example `sudo apt install --reinstall dotnet-sdk-8.0`.
+
+**`dotnet: command not found`** (macOS / Linux)
+
+The SDK is installed but the terminal hasn't picked up the `PATH` change. Open a
+new terminal. If it still fails, the macOS installer puts `dotnet` in
+`/usr/local/share/dotnet`, and the install script puts it in `~/.dotnet`; add
+that directory to your `PATH`.
 
 **`You must install or update .NET to run this application`**
 
 The .NET 8 runtime is missing. Installing the .NET 8 SDK as described under
 [Prerequisites](#prerequisites) resolves this.
 
-**`SocketException (10048): Only one usage of each socket address (protocol/network address/port) is normally permitted`**
+**Port already in use**
 
-Another process already holds the port. Either stop the earlier server
-instance, or start this one on a different port by passing a different number.
+The error text depends on the platform:
+
+- Windows: `SocketException (10048): Only one usage of each socket address ... is normally permitted`
+- macOS: `SocketException (48): Address already in use`
+- Linux: `SocketException (98): Address already in use`
+
+Another process already holds the port, often an earlier server that is still
+running. Find it with `netstat -ano | findstr :5000` on Windows, or
+`lsof -nP -iUDP:5000` on macOS and Linux. Either stop it, or start this server
+on a different port by passing a different number.
 
 **Clients cannot connect across a network**
 
-Confirm the server host allows inbound **UDP** on the chosen port, and that
-clients are pointing at the server machine's IP address rather than
-`127.0.0.1`.
+Confirm the server host's firewall allows inbound **UDP** on the chosen port
+(see [Run the server](#run-the-server) for each platform), and that clients are
+pointing at the server machine's IP address rather than `127.0.0.1`.
