@@ -30,6 +30,10 @@ dotnet run -c Release -- --clients 40 --duration 30
 | `--publish-every N` | publish on every Nth sync frame instead of every one, to vary upstream load independently of client count. |
 | `--join-late N` | hold N clients back and join them mid-run, to test what a client learns about a world already in progress. |
 | `--json PATH` | write the whole report as JSON as well, for charting across runs. |
+| `--loss P` | drop P% of datagrams, independently in each direction for every client, from the start of the load to the end of the run. Unlike the server's `--fault-drop-entity-data`, this also loses frame begins, snapshots and client uploads. |
+| `--duplicate P` | deliver P% of datagrams twice, in each direction. |
+| `--reorder P` | hold back P% of datagrams behind up to about three frames' worth of later ones, in each direction. |
+| `--impair-seed N` | seed for the three options above, so a run replays exactly (default 1). |
 
 Exit code is 0 on pass, 1 on a failed cross check, 2 on a setup problem.
 
@@ -104,6 +108,11 @@ catch up on, because dirty-only sync broadcasts a value only in the frame it cha
 milliseconds. One update is one sync frame, so at 30 frames/s a lag of 2 is about 66 ms. A mean
 under 1 is the floor: the owner's counter is read without synchronising against its own send, so
 roughly half of all samples look one behind even when nothing is wrong.
+
+**view age** (JSON only) — how far behind each observer's current view of every other avatar is,
+sampled at every frame begin whether or not an update arrived. Staleness above only sees samples
+that do arrive, and the server always relays its latest value, so it cannot see the frames an
+observer spends on an old value after a lost update. View age can.
 
 **faults seen live** — checked as samples arrive. `impossible states` means a value combination the
 owner never published. `misattributed states` means another player's state arrived under this

@@ -29,6 +29,13 @@ namespace StressTest
         public string jsonPath;
         public bool allowPlayerIDOverflow;
 
+        // ---- link impairment, applied by the harness to every client in both directions -------
+        public double lossPercent;
+        public double duplicatePercent;
+        public double reorderPercent;
+        public int impairSeed = 1;
+        public bool ImpairmentEnabled => this.lossPercent > 0 || this.duplicatePercent > 0 || this.reorderPercent > 0;
+
         // ---- reconnection episodes --------------------------------------------------------
         public int killCount;
         public KillMode killMode = KillMode.Rejoin;
@@ -132,6 +139,18 @@ namespace StressTest
                         break;
                     case "--allow-player-id-overflow":
                         config.allowPlayerIDOverflow = true;
+                        break;
+                    case "--loss":
+                        if (!TryTakeDouble(value, ref i, out config.lossPercent) || config.lossPercent < 0 || config.lossPercent > 100) { error = "--loss needs a percentage from 0 to 100"; return false; }
+                        break;
+                    case "--duplicate":
+                        if (!TryTakeDouble(value, ref i, out config.duplicatePercent) || config.duplicatePercent < 0 || config.duplicatePercent > 100) { error = "--duplicate needs a percentage from 0 to 100"; return false; }
+                        break;
+                    case "--reorder":
+                        if (!TryTakeDouble(value, ref i, out config.reorderPercent) || config.reorderPercent < 0 || config.reorderPercent > 100) { error = "--reorder needs a percentage from 0 to 100"; return false; }
+                        break;
+                    case "--impair-seed":
+                        if (!TryTakeInt(value, ref i, out config.impairSeed)) { error = "--impair-seed needs a number"; return false; }
                         break;
                     case "--kill":
                         if (!TryTakeInt(value, ref i, out config.killCount) || config.killCount < 0) { error = "--kill needs a non-negative number of clients"; return false; }
@@ -441,6 +460,13 @@ namespace StressTest
             Console.WriteLine("target          " + config.serverAddress + ":" + config.serverPort);
             Console.WriteLine("clients         " + config.clientCount);
             Console.WriteLine("client id base  " + config.clientIDBase);
+            if (config.ImpairmentEnabled)
+            {
+                Console.WriteLine("impairment      loss " + config.lossPercent.ToString(CultureInfo.InvariantCulture)
+                    + "%, duplicate " + config.duplicatePercent.ToString(CultureInfo.InvariantCulture)
+                    + "%, reorder " + config.reorderPercent.ToString(CultureInfo.InvariantCulture)
+                    + "% each way, seed " + config.impairSeed);
+            }
             if (config.killCount > 0)
             {
                 Console.WriteLine("kills           " + config.killCount + " clients, " + config.killMode.ToString().ToLowerInvariant()
@@ -767,7 +793,9 @@ namespace StressTest
             List<VirtualClient> atEndClients = liveSet.Snapshot();
             ClientStats atEnd = Report.Aggregate(atEndClients);
             LoadWindow measured = new LoadWindow();
-            measured.seconds = (DateTime.UtcNow - start).TotalSeconds;
+            measured.startUtc = start;
+            measured.endUtc = DateTime.UtcNow;
+            measured.seconds = (measured.endUtc - start).TotalSeconds;
             measured.clientCount = atEndClients.Count;
             measured.datagramsIn = atEnd.datagramsReceived - atStart.datagramsReceived;
             measured.datagramsOut = atEnd.datagramsSent - atStart.datagramsSent;

@@ -193,6 +193,8 @@ namespace StressTest
     internal sealed class LoadWindow
     {
         public double seconds;
+        /// <summary>Wall clock bounds of the window, so samples taken outside the harness (ps) can be cut to match.</summary>
+        public DateTime startUtc, endUtc;
         public long datagramsIn, datagramsOut, bytesIn, bytesOut;
         public long syncFrames, stateUpdates, entityData;
         /// <summary>Frames seen by the single client that saw the most, i.e. one present for the whole window.</summary>
@@ -227,6 +229,15 @@ namespace StressTest
         public readonly long[] lagBuckets = new long[LagBucketCount];
         public long lagSamples, lagSum, lagMax;
 
+        // Age of each observer's current view of every other avatar, sampled at every frame begin
+        // whether or not an update arrived. Lag above only sees samples that do arrive, and the
+        // server always relays its latest value, so it cannot see the gap a lost packet leaves.
+        public readonly long[] viewAgeBuckets = new long[LagBucketCount];
+        public long viewAgeSamples, viewAgeSum, viewAgeMax;
+
+        // Link impairment applied by the harness itself (--loss, --duplicate, --reorder).
+        public long impairDroppedIn, impairDroppedOut, impairDuplicatedIn, impairDuplicatedOut, impairReorderedIn, impairReorderedOut;
+
         public void RecordLag(int lag)
         {
             if (lag < 0)
@@ -241,19 +252,39 @@ namespace StressTest
             {
                 this.lagMax = lag;
             }
-            // Bucket b holds [2^(b-1), 2^b), so bucket 1 is exactly one update behind.
+            this.lagBuckets[Bucket(lag)]++;
+        }
+
+        public void RecordViewAge(int age)
+        {
+            if (age < 0)
+            {
+                age = 0;
+            }
+            this.viewAgeSamples++;
+            this.viewAgeSum += age;
+            if (age > this.viewAgeMax)
+            {
+                this.viewAgeMax = age;
+            }
+            this.viewAgeBuckets[Bucket(age)]++;
+        }
+
+        /// <summary>Bucket b holds [2^(b-1), 2^b), so bucket 1 is exactly one update behind.</summary>
+        private static int Bucket(int value)
+        {
             int bucket = 0;
-            if (lag > 0)
+            if (value > 0)
             {
                 bucket = 1;
                 int upperExclusive = 2;
-                while (lag >= upperExclusive && bucket < LagBucketCount - 1)
+                while (value >= upperExclusive && bucket < LagBucketCount - 1)
                 {
                     upperExclusive <<= 1;
                     bucket++;
                 }
             }
-            this.lagBuckets[bucket]++;
+            return bucket;
         }
     }
 
@@ -276,6 +307,15 @@ namespace StressTest
         private Socket _socket;
         private readonly ByteWriter _writer = new ByteWriter(Wire.MaximumDatagramLength);
         private readonly byte[] _receiveBuffer = new byte[Wire.MaximumDatagramLength];
+
+        // Link impairment state. Seeded per client so a run replays exactly.
+        private readonly Random _impairRandom;
+        private readonly byte[] _heldIn = new byte[Wire.MaximumDatagramLength];
+        private int _heldInLength;
+        private int _heldInRemaining;
+        private readonly byte[] _heldOut = new byte[Wire.MaximumDatagramLength];
+        private int _heldOutLength;
+        private int _heldOutRemaining;
 
         private int _connectionID = Wire.ConnectionID_Connecting;
         private ushort _sessionID;
@@ -352,6 +392,7 @@ namespace StressTest
             this._shared = shared;
             this._index = index;
             this._clientID = clientID;
+            this._impairRandom = new Random(unchecked(config.impairSeed * 7919 + index));
         }
 
         /// <summary>
@@ -811,10 +852,84 @@ namespace StressTest
                 this.stats.blackoutDatagramsDropped++;
                 return;
             }
+            if (!this.ImpairmentActive)
+            {
+                this.Deliver(this._receiveBuffer, length);
+                return;
+            }
+
+            // Inbound impairment: the datagram is lost, held back so it arrives after the next
+            // one, or delivered twice. Each is decided independently.
+            if (this.Roll(this._config.lossPercent))
+            {
+                this.stats.impairDroppedIn++;
+                return;
+            }
+            if (this._heldInLength == 0 && this.Roll(this._config.reorderPercent))
+            {
+                // Held back behind a random number of later datagrams, up to about three frames'
+                // worth, so it can arrive after a newer update of the same entity.
+                Buffer.BlockCopy(this._receiveBuffer, 0, this._heldIn, 0, length);
+                this._heldInLength = length;
+                this._heldInRemaining = this.Between(1, 3 * (this.observed.Count + 1));
+                this.stats.impairReorderedIn++;
+                return;
+            }
+            this.Deliver(this._receiveBuffer, length);
+            if (this.Roll(this._config.duplicatePercent))
+            {
+                this.stats.impairDuplicatedIn++;
+                this.Deliver(this._receiveBuffer, length);
+            }
+            if (this._heldInLength > 0 && --this._heldInRemaining <= 0)
+            {
+                int held = this._heldInLength;
+                this._heldInLength = 0;
+                this.Deliver(this._heldIn, held);
+            }
+        }
+
+        private bool ImpairmentActive
+        {
+            get
+            {
+                if (!this._config.ImpairmentEnabled)
+                {
+                    return false;
+                }
+                // Only once the run is under way, so login and spawning stay reliable and every
+                // run starts from the same state. The loss continues through the quiet period.
+                Phase phase = this._shared.Phase;
+                return phase == Phase.Load || phase == Phase.Quiesce;
+            }
+        }
+
+        private int Between(int minInclusive, int maxInclusive)
+        {
+            lock (this._impairRandom)
+            {
+                return this._impairRandom.Next(minInclusive, maxInclusive + 1);
+            }
+        }
+
+        private bool Roll(double percent)
+        {
+            if (percent <= 0)
+            {
+                return false;
+            }
+            lock (this._impairRandom)
+            {
+                return this._impairRandom.NextDouble() * 100.0 < percent;
+            }
+        }
+
+        private void Deliver(byte[] buffer, int length)
+        {
             this.stats.datagramsReceived++;
             this.stats.bytesReceived += length;
 
-            ByteReader reader = new ByteReader(new ReadOnlySpan<byte>(this._receiveBuffer, 0, length));
+            ByteReader reader = new ByteReader(new ReadOnlySpan<byte>(buffer, 0, length));
             reader.ReadInt32();     // connection id
             S2C packetType = (S2C)reader.ReadUInt16();
             try
@@ -861,10 +976,33 @@ namespace StressTest
             }
         }
 
+        /// <summary>
+        /// How far behind this observer's view of every other avatar is right now, in the owner's
+        /// update numbers. Taken at each frame begin, before this frame's data, so it counts the
+        /// frames an observer spends on an old value after a lost update, not just the age of
+        /// the samples that do arrive.
+        /// </summary>
+        private void SampleViewAge()
+        {
+            foreach (ObservedEntity entity in this.observed.Values)
+            {
+                if (entity.runtimeID == this._myEntityRuntimeID || entity.lastSequence < 0)
+                {
+                    continue;
+                }
+                this.stats.RecordViewAge(this._shared.GetPublishedSequence(entity.authorityPlayerID) - entity.lastSequence);
+            }
+        }
+
         private void HandleSyncFrameBegin(ref ByteReader reader)
         {
             uint syncFrameNumber = reader.ReadUInt32();
             this.stats.syncFrameBeginCount++;
+
+            if (this._shared.Phase == Phase.Load)
+            {
+                this.SampleViewAge();
+            }
 
             // The heartbeat goes out first, exactly as ClientSideFrameSynchronizationController
             // does. Going quiet for DisconnectThresholdSeconds gets the session dropped,
@@ -1253,11 +1391,56 @@ namespace StressTest
                 // server declare the session dead.
                 return;
             }
+            if (!this.ImpairmentActive)
+            {
+                if (this.Transmit(writer.Buffer, writer.Length))
+                {
+                    this.stats.datagramsSent++;
+                    this.stats.bytesSent += writer.Length;
+                }
+                return;
+            }
+
+            // Outbound impairment mirrors the inbound side. A dropped datagram still counts as
+            // sent: it left the client and was lost on the way.
+            this.stats.datagramsSent++;
+            this.stats.bytesSent += writer.Length;
+            lock (this._heldOut)
+            {
+                if (this.Roll(this._config.lossPercent))
+                {
+                    this.stats.impairDroppedOut++;
+                    return;
+                }
+                if (this._heldOutLength == 0 && this.Roll(this._config.reorderPercent))
+                {
+                    // A client sends two datagrams a frame, so this is up to about three frames late.
+                    Buffer.BlockCopy(writer.Buffer, 0, this._heldOut, 0, writer.Length);
+                    this._heldOutLength = writer.Length;
+                    this._heldOutRemaining = this.Between(1, 6);
+                    this.stats.impairReorderedOut++;
+                    return;
+                }
+                this.Transmit(writer.Buffer, writer.Length);
+                if (this.Roll(this._config.duplicatePercent))
+                {
+                    this.stats.impairDuplicatedOut++;
+                    this.Transmit(writer.Buffer, writer.Length);
+                }
+                if (this._heldOutLength > 0 && --this._heldOutRemaining <= 0)
+                {
+                    this.Transmit(this._heldOut, this._heldOutLength);
+                    this._heldOutLength = 0;
+                }
+            }
+        }
+
+        private bool Transmit(byte[] buffer, int length)
+        {
             try
             {
-                this._socket.Send(writer.Buffer, 0, writer.Length, SocketFlags.None);
-                this.stats.datagramsSent++;
-                this.stats.bytesSent += writer.Length;
+                this._socket.Send(buffer, 0, length, SocketFlags.None);
+                return true;
             }
             catch (SocketException)
             {
@@ -1267,6 +1450,7 @@ namespace StressTest
             catch (ObjectDisposedException)
             {
             }
+            return false;
         }
 
         private async Task<int> ReceiveWithTimeoutAsync(int timeoutMilliseconds, CancellationToken cancellationToken)

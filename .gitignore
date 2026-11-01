@@ -4,6 +4,7 @@ obj/
 .vs/
 *.user
 Tools/StressTest/runs
+Tools/Experiments/results
 
 # --- Unity ---
 # The Unity client is no longer tracked here. Its source still exists in the
@@ -14,11 +15,15 @@ Temp/
 Logs/
 UserSettings/
 
+# --- Binaries ---
+*.pyc
 
 # --- Documents ---
 *.pdf
+*.docx
 
 # --- Personal notes ---
 TODO.md
 TESTING.md
 stats.md
+Tools/Experiments/RESULTS.md

@@ -89,6 +89,50 @@ That run reports `sync rate 60 frames/second` instead. The port and
 [Sync rate accuracy](#sync-rate-accuracy) for the rates the tick loop can
 actually deliver.
 
+### Dropping packets on purpose
+
+For testing only, `--fault-drop-entity-data` makes the server silently skip a
+percentage (0 to 100, decimals allowed) of its per-frame entity data
+broadcasts, decided independently for every client:
+
+```sh
+dotnet run --project DedicatedServer/DedicatedServer -c Release -- 5000 --fault-drop-entity-data 5
+```
+
+The run prints `FAULT INJECTION ON: dropping 5% of entity data broadcasts per
+client` at startup, and on Ctrl+C reports how many packets it dropped. Only the
+regular per-frame broadcast is affected: frame begins, creations, deletions and
+the sync-lost snapshot still go out, so clients see no frame number gap. That
+loss is invisible to the framework, which is what lets the stress test's
+"stale forever" check be shown to fire. It is off (0) unless the flag is given,
+and may be combined with the port and `--sync-rate` in any order.
+
+### Full sync instead of dirty-only
+
+`--full-sync` makes the server send every entity's full data every sync frame,
+instead of only what changed in that frame, so the two modes can be compared:
+
+```sh
+dotnet run --project DedicatedServer/DedicatedServer -c Release -- 5000 --full-sync
+```
+
+The startup output says `sync mode full` (or `sync mode dirty-only` without the
+flag). It only changes what the server sends; clients publish as before.
+
+### Running the evaluation experiments
+
+[Tools/Experiments/run.sh](Tools/Experiments/run.sh) runs experiments E1 to E4 of
+the report, three repeats each, about 75 minutes in all. Each run starts a fresh
+server, samples its CPU and memory with `ps`, runs the stress test with `--json`,
+and keeps every file under `Tools/Experiments/results/`. Then:
+
+```sh
+python3 Tools/Experiments/experiments.py summarise
+```
+
+prints the medians for each table. `REPS=1 DURATION=5 Tools/Experiments/run.sh e1e2`
+is a quick smoke test; the experiment names are `e1e2`, `e3` and `e4`.
+
 ### Stop the server
 
 Press **Ctrl+C** in the terminal, on any platform. This triggers a graceful

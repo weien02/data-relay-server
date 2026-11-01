@@ -10,7 +10,7 @@ namespace DedicatedServer
     class Program
     {
         private const ushort DefaultListeningPort = 5000;
-        private const string Usage = "usage: DedicatedServer [listeningPort] [--sync-rate framesPerSecond] [--fault-drop-entity-data percent]";
+        private const string Usage = "usage: DedicatedServer [listeningPort] [--sync-rate framesPerSecond] [--fault-drop-entity-data percent] [--full-sync]";
 
         /// <summary>
         /// How long before a sync frame is due to stop sleeping and spin instead. Even with the
@@ -46,8 +46,16 @@ namespace DedicatedServer
             int syncRatePerSecond = 0;
             // Fault injection for the stress test; 0 means off.
             double faultDropEntityDataPercent = 0;
+            // Sends every entity's full data every sync frame instead of only what changed,
+            // for comparing the two modes. Off unless asked for.
+            bool fullSync = false;
             for (int i = 0; i < args.Length; i++)
             {
+                if (args[i] == "--full-sync")
+                {
+                    fullSync = true;
+                    continue;
+                }
                 if (args[i] == "--sync-rate")
                 {
                     if (i + 1 >= args.Length || !int.TryParse(args[i + 1], out syncRatePerSecond) || syncRatePerSecond <= 0)
@@ -104,6 +112,11 @@ namespace DedicatedServer
             }
             // Recorded per run so a captured log says which rate produced it.
             Console.WriteLine("sync rate " + jumpingGame.configurations.SyncRatePerSecond + " frames/second");
+            if (fullSync)
+            {
+                jumpingGame.configurations.EnableDirtyOnlySync = false;
+            }
+            Console.WriteLine("sync mode " + (jumpingGame.configurations.EnableDirtyOnlySync ? "dirty-only" : "full"));
             if (faultDropEntityDataPercent > 0)
             {
                 jumpingGame.configurations.FaultEntityDataDropPercent = faultDropEntityDataPercent;

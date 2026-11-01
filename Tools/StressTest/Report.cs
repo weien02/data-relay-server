@@ -389,6 +389,19 @@ namespace StressTest
                 total.backupAuthorityRequests += stats.backupAuthorityRequests;
                 total.stateUpdatesSent += stats.stateUpdatesSent;
                 total.blackoutDatagramsDropped += stats.blackoutDatagramsDropped;
+                total.viewAgeSamples += stats.viewAgeSamples;
+                total.viewAgeSum += stats.viewAgeSum;
+                total.viewAgeMax = Math.Max(total.viewAgeMax, stats.viewAgeMax);
+                total.impairDroppedIn += stats.impairDroppedIn;
+                total.impairDroppedOut += stats.impairDroppedOut;
+                total.impairDuplicatedIn += stats.impairDuplicatedIn;
+                total.impairDuplicatedOut += stats.impairDuplicatedOut;
+                total.impairReorderedIn += stats.impairReorderedIn;
+                total.impairReorderedOut += stats.impairReorderedOut;
+                for (int b = 0; b < ClientStats.LagBucketCount; b++)
+                {
+                    total.viewAgeBuckets[b] += stats.viewAgeBuckets[b];
+                }
                 total.corruptSamples += stats.corruptSamples;
                 total.misattributedSamples += stats.misattributedSamples;
                 total.regressedSamples += stats.regressedSamples;
@@ -491,6 +504,22 @@ namespace StressTest
             json.AppendLine("    \"clientIdBase\": " + config.clientIDBase);
             json.AppendLine("  },");
             json.AppendLine("  \"connections\": { \"requested\": " + all.Count + ", \"loggedIn\": " + live.Count + " },");
+            // The load window alone. "traffic" below covers the whole run, login and quiesce included,
+            // so rates should be taken from here.
+            json.AppendLine("  \"loadWindow\": {");
+            json.AppendLine("    \"seconds\": " + Number(loadWindow.seconds) + ",");
+            json.AppendLine("    \"startUnixMs\": " + new DateTimeOffset(loadWindow.startUtc).ToUnixTimeMilliseconds() + ",");
+            json.AppendLine("    \"endUnixMs\": " + new DateTimeOffset(loadWindow.endUtc).ToUnixTimeMilliseconds() + ",");
+            json.AppendLine("    \"clients\": " + loadWindow.clientCount + ",");
+            json.AppendLine("    \"datagramsReceived\": " + loadWindow.datagramsIn + ",");
+            json.AppendLine("    \"datagramsSent\": " + loadWindow.datagramsOut + ",");
+            json.AppendLine("    \"bytesReceived\": " + loadWindow.bytesIn + ",");
+            json.AppendLine("    \"bytesSent\": " + loadWindow.bytesOut + ",");
+            json.AppendLine("    \"syncFrames\": " + loadWindow.syncFrames + ",");
+            json.AppendLine("    \"framesForOneClient\": " + loadWindow.maxSyncFramesForOneClient + ",");
+            json.AppendLine("    \"stateUpdatesSent\": " + loadWindow.stateUpdates + ",");
+            json.AppendLine("    \"entityDataReceived\": " + loadWindow.entityData);
+            json.AppendLine("  },");
             json.AppendLine("  \"traffic\": {");
             json.AppendLine("    \"datagramsReceived\": " + total.datagramsReceived + ",");
             json.AppendLine("    \"datagramsSent\": " + total.datagramsSent + ",");
@@ -518,6 +547,25 @@ namespace StressTest
                 json.Append(i > 0 ? ", " : "").Append(total.lagBuckets[i]);
             }
             json.AppendLine("]");
+            json.AppendLine("  },");
+            json.AppendLine("  \"viewAge\": {");
+            json.AppendLine("    \"samples\": " + total.viewAgeSamples + ",");
+            json.AppendLine("    \"sum\": " + total.viewAgeSum + ",");
+            json.AppendLine("    \"max\": " + total.viewAgeMax + ",");
+            json.Append("    \"buckets\": [");
+            for (int i = 0; i < ClientStats.LagBucketCount; i++)
+            {
+                json.Append(i > 0 ? ", " : "").Append(total.viewAgeBuckets[i]);
+            }
+            json.AppendLine("]");
+            json.AppendLine("  },");
+            json.AppendLine("  \"impairment\": {");
+            json.AppendLine("    \"lossPercent\": " + config.lossPercent.ToString(CultureInfo.InvariantCulture) + ",");
+            json.AppendLine("    \"duplicatePercent\": " + config.duplicatePercent.ToString(CultureInfo.InvariantCulture) + ",");
+            json.AppendLine("    \"reorderPercent\": " + config.reorderPercent.ToString(CultureInfo.InvariantCulture) + ",");
+            json.AppendLine("    \"droppedIn\": " + total.impairDroppedIn + ", \"droppedOut\": " + total.impairDroppedOut + ",");
+            json.AppendLine("    \"duplicatedIn\": " + total.impairDuplicatedIn + ", \"duplicatedOut\": " + total.impairDuplicatedOut + ",");
+            json.AppendLine("    \"reorderedIn\": " + total.impairReorderedIn + ", \"reorderedOut\": " + total.impairReorderedOut);
             json.AppendLine("  },");
             json.AppendLine("  \"liveFaults\": {");
             json.AppendLine("    \"impossibleStates\": " + total.corruptSamples + ",");
