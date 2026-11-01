@@ -7,7 +7,7 @@
       "type": "process",
       "args": [
         "build",
-        "${workspaceFolder}/DedicatedServer/DedicatedServer.sln",
+        "${workspaceFolder}/RelayServer/RelayServer.sln",
         "-c",
         "Debug"
       ],
@@ -23,7 +23,7 @@
       "type": "process",
       "args": [
         "build",
-        "${workspaceFolder}/DedicatedServer/DedicatedServer.sln",
+        "${workspaceFolder}/RelayServer/RelayServer.sln",
         "-c",
         "Release"
       ],

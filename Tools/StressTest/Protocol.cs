@@ -5,7 +5,7 @@ namespace StressTest
 {
     /// <summary>
     /// Packet types sent from a client to the server.
-    /// The values are the ordinals of DedicatedServer.Framework.Networking.ClientToServerPacketTypes
+    /// The values are the ordinals of RelayServer.Framework.Networking.ClientToServerPacketTypes
     /// and have to stay in step with it.
     /// </summary>
     internal enum C2S : ushort
@@ -23,7 +23,7 @@ namespace StressTest
 
     /// <summary>
     /// Packet types sent from the server to a client.
-    /// The values are the ordinals of DedicatedServer.Framework.Networking.ServerToClientPacketTypes
+    /// The values are the ordinals of RelayServer.Framework.Networking.ServerToClientPacketTypes
     /// and have to stay in step with it.
     /// </summary>
     internal enum S2C : ushort

@@ -1,8 +1,12 @@
-# DedicatedServer
+# RelayServer
 
-Authoritative dedicated server for the frame-synchronisation networking
-framework. It is a headless .NET 8 console application that listens on a UDP
-port, accepts client logins, and drives the server-side simulation tick.
+Data-only relay server for the frame-synchronisation networking framework.
+It runs no game simulation: each client simulates the entities it owns, and
+the server stores the latest entity data and relays it to the other clients.
+It is a headless .NET 8 console application that listens on a UDP port,
+accepts client logins, and sends sync frames at a configurable rate.
+
+Renamed from `DedicatedServer` in the original project.
 
 
 ## Prerequisites
@@ -41,7 +45,7 @@ Newer SDKs may also be installed alongside; `global.json` pins the build to the
 From the repository root, in any shell (PowerShell, cmd, bash, zsh):
 
 ```sh
-dotnet run --project DedicatedServer/DedicatedServer -c Release -- 5000
+dotnet run --project RelayServer/RelayServer -c Release -- 5000
 ```
 
 This compiles and launches in one step. `5000` is the UDP port to listen on and
@@ -64,9 +68,9 @@ from the same machine (`127.0.0.1`) are not affected.
 ```
 process id 7456
 sync rate 30 frames/second
-[Information][DedicatedServer.Demo.JumpingGame.JumpingGame] begin StartServer
-[Information][DedicatedServer.Demo.JumpingGame.JumpingGame] server running on port 5000
-[Information][DedicatedServer.Demo.JumpingGame.JumpingGame] end StartServer
+[Information][RelayServer.Demo.JumpingGame.JumpingGame] begin StartServer
+[Information][RelayServer.Demo.JumpingGame.JumpingGame] server running on port 5000
+[Information][RelayServer.Demo.JumpingGame.JumpingGame] end StartServer
 ```
 
 The process then stays in its tick loop, printing further log lines as clients
@@ -81,7 +85,7 @@ single run, which saves editing and rebuilding when sweeping rates during
 measurement:
 
 ```sh
-dotnet run --project DedicatedServer/DedicatedServer -c Release -- 5000 --sync-rate 60
+dotnet run --project RelayServer/RelayServer -c Release -- 5000 --sync-rate 60
 ```
 
 That run reports `sync rate 60 frames/second` instead. The port and
@@ -96,7 +100,7 @@ percentage (0 to 100, decimals allowed) of its per-frame entity data
 broadcasts, decided independently for every client:
 
 ```sh
-dotnet run --project DedicatedServer/DedicatedServer -c Release -- 5000 --fault-drop-entity-data 5
+dotnet run --project RelayServer/RelayServer -c Release -- 5000 --fault-drop-entity-data 5
 ```
 
 The run prints `FAULT INJECTION ON: dropping 5% of entity data broadcasts per
@@ -113,7 +117,7 @@ and may be combined with the port and `--sync-rate` in any order.
 instead of only what changed in that frame, so the two modes can be compared:
 
 ```sh
-dotnet run --project DedicatedServer/DedicatedServer -c Release -- 5000 --full-sync
+dotnet run --project RelayServer/RelayServer -c Release -- 5000 --full-sync
 ```
 
 The startup output says `sync mode full` (or `sync mode dirty-only` without the
@@ -151,18 +155,18 @@ run.
 
 ```sh
 # Build once
-dotnet build DedicatedServer/DedicatedServer.sln -c Release
+dotnet build RelayServer/RelayServer.sln -c Release
 
 # Run the build as many times as needed (same command on every platform)
-dotnet DedicatedServer/DedicatedServer/bin/Release/net8.0/DedicatedServer.dll 5000
+dotnet RelayServer/RelayServer/bin/Release/net8.0/RelayServer.dll 5000
 ```
 
 The build also produces a native launcher you can run directly:
 
 | Platform | Command |
 | --- | --- |
-| Windows | `.\DedicatedServer\DedicatedServer\bin\Release\net8.0\DedicatedServer.exe 5000` |
-| macOS / Linux | `./DedicatedServer/DedicatedServer/bin/Release/net8.0/DedicatedServer 5000` |
+| Windows | `.\RelayServer\RelayServer\bin\Release\net8.0\RelayServer.exe 5000` |
+| macOS / Linux | `./RelayServer/RelayServer/bin/Release/net8.0/RelayServer 5000` |
 
 Use `-c Debug` in place of `-c Release` for a debug build; the output path
 changes to `bin/Debug/net8.0/` to match.
@@ -177,13 +181,13 @@ extension, which pulls in the C# extension as a dependency.
 
 1. Open the repository root folder in VS Code.
 2. Press **F5**.
-3. Choose **Dedicated server (Debug, port 5000)**.
+3. Choose **Relay server (Debug, port 5000)**.
 
 The project builds first, then launches in the integrated terminal so that
 Ctrl+C reaches the shutdown handler. Breakpoints in the tick loop and packet
 handlers behave normally.
 
-A **Dedicated server (Release, port 5000)** configuration is also provided.
+A **Relay server (Release, port 5000)** configuration is also provided.
 **Ctrl+Shift+B** (**Cmd+Shift+B** on macOS) runs a debug build without
 launching. The launch configurations start the `.dll` through `dotnet`, so they
 work unchanged on every platform.
@@ -194,7 +198,7 @@ To change the port, edit the `"args": ["5000"]` line in
 ## Configuration
 
 Runtime behaviour is set in
-[Framework/Configurations.cs](DedicatedServer/DedicatedServer/Framework/Configurations.cs):
+[Framework/Configurations.cs](RelayServer/RelayServer/Framework/Configurations.cs):
 
 | Setting | Class default | Jumping Game demo | Purpose |
 | --- | --- | --- | --- |
@@ -221,7 +225,7 @@ fixed at startup and left alone while the process runs; `StartFrameSync` reads
 `SyncRatePerSecond` once, so changing it after the server starts has no effect.
 
 Garbage collection and JIT tiering are pinned explicitly in
-[DedicatedServer.csproj](DedicatedServer/DedicatedServer/DedicatedServer.csproj)
+[RelayServer.csproj](RelayServer/RelayServer/RelayServer.csproj)
 so that resource-usage measurements stay reproducible across machines and runs.
 Changing them invalidates any previously recorded baseline.
 
@@ -312,14 +316,14 @@ newer major version.
 ## Project layout
 
 ```
-DedicatedServer/DedicatedServer/
+RelayServer/RelayServer/
 ├── Program.cs              Entry point, argument parsing, tick loop
 ├── Framework/
 │   ├── Configurations.cs   Shared server/client settings
 │   ├── ECS/                Entity registry, data stores, networked values
 │   ├── Networking/         Packet format, packet types, UDP transport
 │   └── Server/             Game server, rooms, sessions, frame sync
-├── GameDemo/               Jumping Game demo simulation
+├── GameDemo/               Jumping Game demo settings and data stores
 └── Unity/ECS/Data/         Data types shared with the Unity client
 ```
 

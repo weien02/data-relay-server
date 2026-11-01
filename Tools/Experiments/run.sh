@@ -20,11 +20,11 @@ DURATION="${DURATION:-60}"
 PORT="${PORT:-5000}"
 WHICH="${1:-all}"
 
-SERVER_DLL="$ROOT/DedicatedServer/DedicatedServer/bin/Release/net8.0/DedicatedServer.dll"
+SERVER_DLL="$ROOT/RelayServer/RelayServer/bin/Release/net8.0/RelayServer.dll"
 HARNESS_DLL="$ROOT/Tools/StressTest/bin/Release/net8.0/StressTest.dll"
 
 echo "building Release binaries once, so no build happens inside a measurement"
-dotnet build -c Release "$ROOT/DedicatedServer/DedicatedServer" >/dev/null || { echo "server build failed"; exit 2; }
+dotnet build -c Release "$ROOT/RelayServer/RelayServer" >/dev/null || { echo "server build failed"; exit 2; }
 dotnet build -c Release "$ROOT/Tools/StressTest" >/dev/null || { echo "harness build failed"; exit 2; }
 
 now_ms() { python3 -c 'import time; print(int(time.time() * 1000))'; }

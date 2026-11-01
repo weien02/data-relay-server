@@ -1,6 +1,6 @@
 # StressTest
 
-A load and correctness harness for the dedicated server. It runs many simulated users against a
+A load and correctness harness for the relay server. It runs many simulated users against a
 running server, has each one publish its own state and observe everyone else's, and then checks
 every observer's view against what the owners actually published.
 
@@ -12,7 +12,7 @@ would cancel itself out on both sides and the test would pass anyway.
 
 ```
 # terminal 1
-cd DedicatedServer/DedicatedServer
+cd RelayServer/RelayServer
 dotnet run -c Release -- 5000
 
 # terminal 2
@@ -153,7 +153,7 @@ usually the symptom of the snapshot filter described below rather than packet lo
 
 `SyncEntitiesToSingleClient` is documented as sending the client everything it needs, but
 `SyncEntitiesDataInInterval`
-([ServerSideEntityManager.cs:142](../../DedicatedServer/DedicatedServer/Framework/Server/ServerSideEntityManager.cs#L142))
+([ServerSideEntityManager.cs:142](../../RelayServer/RelayServer/Framework/Server/ServerSideEntityManager.cs#L142))
 filters on `LastModifiedFrameNumber` being inside the client's missed window *before* `syncFullData`
 is ever consulted. `syncFullData` only decides whether full or dirty fields are written for an
 entity that already passed the filter. So **an entity that stopped changing before the client's
